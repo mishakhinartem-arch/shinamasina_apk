@@ -1,0 +1,88 @@
+/* Хранение шин: приём, этикетка 75×120, акт приёма, оплата, выдача, сроки. */
+(function () {
+  const SM = window.SM, U = SM.ui, A = U.act, esc = SM.esc, St = SM.storage;
+  U.sf = "active"; U.sq = "";
+  U.views.storage = function (el, S) {
+    const all = St.search(S, U.sq);
+    const cnt = { active: 0, soon: 0, overdue: 0, issued: 0 };
+    S.storage.forEach((r) => { const s = St.status(S, r); if (s === "issued") cnt.issued++; else { cnt.active++; if (s === "soon") cnt.soon++; if (s === "overdue") cnt.overdue++; } });
+    const list = all.filter((r) => { const s = St.status(S, r); return U.sf === "active" ? s !== "issued" : U.sf === s; }).sort((a, b) => a.until - b.until);
+    const F = [["active", "На хранении", cnt.active], ["soon", "Срок истекает (" + S.settings.storageWarnDays + " дн.)", cnt.soon], ["overdue", "Просрочено", cnt.overdue], ["issued", "Выдано", cnt.issued]];
+    el.innerHTML = '<div class="row" style="margin-bottom:10px"><div class="h1 grow">Хранение шин</div><button class="btn primary" data-act="storageNew">+ Принять комплект</button></div>' +
+      '<div class="row" style="margin-bottom:10px">' + F.map((f) => '<button class="btn sm ' + (U.sf === f[0] ? "dark" : "") + '" data-act="sFilter" data-f="' + f[0] + '">' + f[1] + " · " + f[2] + "</button>").join("") + '<input class="inp" id="s-q" style="flex:1;min-width:200px" placeholder="Поиск: Х-0001, госномер, телефон, имя" value="' + esc(U.sq) + '"></div>' +
+      '<div class="card scroll">' + (list.length ? '<table class="tbl"><tr><th>№</th><th>Клиент</th><th>Шины</th><th>Место</th><th>Срок</th><th>Оплата</th><th></th></tr>' + list.map((r) => { const s = St.status(S, r); const dl = St.daysLeft(r); return "<tr><td><b>" + r.no + "</b><br><span class=\"chip " + s + '">' + St.STATUS_RU[s] + "</span></td><td>" + (r.plate ? U.plateHtml(r.plate, true) : "") + "<br><small>" + esc(r.name) + " · " + SM.phoneShow(r.phone) + "</small></td><td>" + r.qty + " × " + esc(r.size) + "<br><small>" + esc([r.brand, r.rims ? "с дисками" : "без дисков", r.season, r.condition].filter(Boolean).join(" · ")) + "</small></td><td><b>" + esc(r.place) + "</b></td><td>до " + SM.fmtDate(r.until) + "<br><small>" + (r.status === "issued" ? "выдано " + SM.fmtDate(r.issuedAt) : dl < 0 ? '<span class="down">просрочено на ' + -dl + " дн.</span>" : "осталось " + dl + " дн.") + "</small></td><td>" + SM.fmt(r.price) + (r.priceManual ? ' <small class="muted">вручную</small>' : "") + "<br><small>" + (r.paid ? '<span class="up">оплачено</span>' : '<span class="down">не оплачено</span>') + '</small></td><td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="sLabel" data-id="' + r.id + '">Этикетка</button><button class="btn sm" data-act="sAct" data-id="' + r.id + '">Акт</button>' + (!r.paid && r.status !== "issued" ? (SM.orders.storageInOrder(S, r.id) ? '<span class="chip soon">в чеке заказа</span>' : '<button class="btn sm" data-act="sPay" data-id="' + r.id + '">Оплата</button>' + (U.activeOrder(S) ? '<button class="btn sm" data-act="sToOrder" data-id="' + r.id + '">В чек</button>' : "")) : "") + (r.status !== "issued" ? '<button class="btn sm primary" data-act="sIssue" data-id="' + r.id + '">Выдать</button>' : "") + "</div></td></tr>"; }).join("") + "</table>" : '<div class="empty">Нет комплектов</div>') + "</div>";
+    const inp = el.querySelector("#s-q");
+    inp.addEventListener("input", () => { U.sq = inp.value; const p = inp.selectionStart; U.render(); const i2 = document.getElementById("s-q"); i2.focus(); try { i2.setSelectionRange(p, p); } catch (_) {} });
+  };
+  A.sFilter = (el) => { U.sf = el.dataset.f; U.render(); };
+  A.sToOrder = (el) => { const S = U.S(); const o = U.activeOrder(S); const r = S.storage.find((x) => x.id === el.dataset.id); if (!o) return U.toast("Нет открытого заказа", true); const a = SM.orders.addStorage(S, o, r, U.who()); if (!a.ok) return U.toast(a.msg, true); SM.save(); U.go("order"); U.toast("Хранение " + r.no + " в чеке заказа — без скидки"); };
+  U.storageForm = function () {
+    const S = U.S(); const o = U.activeOrder(S); const c = o && o.clientId ? SM.client(S, o.clientId) : null;
+    let plate = (o && o.plate) || (c && c.plate) || "";
+    let override = false;
+    const season = S.settings.storageSeasonMonths || 6;
+    const radius0 = (c && c.wheel_size) || S.ui.radius || "R16";
+    const terms = [season, season + 1, 3, 12].filter((v, i, a) => a.indexOf(v) === i);
+    const payOpts = (o ? '<option value="order">в чек заказа ' + esc(SM.orders.title(o)) + " (без скидки)</option>" : "") + '<option value="">позже, при выдаче</option><option value="cash">сейчас — наличные</option><option value="card">сейчас — карта</option><option value="qr">сейчас — QR</option>';
+    U.modal({ title: "Приём шин на хранение", wide: true, body: '<div class="grid2"><div><label class="fld">Госномер</label><button class="btn block ghost" data-pl style="min-height:66px">' + U.plateHtml(plate, true) + '</button></div><div><label class="fld">Телефон</label><input class="inp" type="tel" data-f="phone" value="' + esc(c ? SM.phoneShow(c.phone) : "") + '" placeholder="+7 900 000-00-00"></div>' +
+      '<div><label class="fld">Имя клиента</label><input class="inp" data-f="name" value="' + esc(c ? c.name : "") + '"></div><div><label class="fld">Автомобиль</label><input class="inp" data-f="car" value="' + esc(c ? c.car : "") + '"></div></div>' +
+      '<div class="grid3"><div><label class="fld">Кол-во шин</label><select class="inp" data-f="qty"><option>4</option><option>2</option><option>1</option><option>3</option><option>5</option><option>6</option><option>8</option></select></div><div><label class="fld">Радиус (для цены)</label><select class="inp" data-f="radius">' + SM.prices.RADII.map((r) => "<option" + (r === radius0 ? " selected" : "") + ">" + r + "</option>").join("") + '</select></div><div><label class="fld">Размер полностью</label><input class="inp" data-f="size" placeholder="205/55 R16" value="' + esc(radius0) + '"></div>' +
+      '<div><label class="fld">Бренд</label><input class="inp" data-f="brand" placeholder="Nokian"></div><div><label class="fld">Сезон</label><select class="inp" data-f="season"><option>лето</option><option>зима</option><option>зима, шипы</option><option>всесезон</option></select></div><div><label class="fld">Состояние (износ)</label><select class="inp" data-f="condition"><option>хорошее</option><option>новые</option><option>среднее</option><option>изношенные</option><option>есть повреждения</option></select></div>' +
+      '<div><label class="fld">Место на стеллаже</label><input class="inp" data-f="place" placeholder="А-1-1"></div><div><label class="fld">Срок</label><select class="inp" data-f="months">' + terms.map((m) => '<option value="' + m + '">' + m + " мес. (до " + SM.fmtDate(St.addMonths(SM.now(), m)) + ")" + (m === season ? " — сезон" : "") + "</option>").join("") + '</select></div><div><label class="fld">Оплата</label><select class="inp" data-f="pay">' + payOpts + "</select></div></div>" +
+      '<label class="check" style="margin-top:10px"><input type="checkbox" data-f="rims"> С дисками (колёса)</label>' +
+      '<div class="card price-box" style="margin-top:10px"><div class="row"><div class="grow"><div class="hint">Стоимость хранения по тарифу</div><div class="big-total" data-price>—</div><div class="hint" data-ptext></div></div><button class="btn sm ghost" data-override>🔒 Изменить цену (PIN)</button></div><input class="inp" type="number" inputmode="numeric" data-f="price" style="display:none;margin-top:8px" placeholder="цена, ₽ (только владелец)"><div class="hint" style="margin-top:6px">Цена фиксированная: тариф меняет владелец в админке (Настройки → Тариф хранения). Скидки на хранение не действуют.</div></div>' +
+      '<div data-err class="down" style="margin-top:8px;font-weight:700"></div>',
+      foot: '<button class="btn" data-close>Отмена</button><button class="btn primary" data-save>Принять на хранение</button>', mount: (m, close) => {
+        const f = (k) => m.querySelector('[data-f="' + k + '"]');
+        const recalc = () => {
+          const calc = St.calcPrice(S, { radius: f("radius").value, months: f("months").value, qty: f("qty").value, rims: f("rims").checked });
+          m.querySelector("[data-price]").textContent = override && f("price").value ? SM.fmt(Number(f("price").value)) + " (вручную)" : calc.ok ? SM.fmt(calc.price) : "нет тарифа";
+          m.querySelector("[data-ptext]").textContent = calc.ok ? calc.text : calc.msg;
+          return calc;
+        };
+        m.addEventListener("change", (e) => { if (e.target.matches('[data-f="size"]')) { const r = St.radiusOf(e.target.value); if (r && SM.prices.RADII.indexOf(r) >= 0) f("radius").value = r; } recalc(); });
+        f("price").addEventListener("input", recalc);
+        recalc();
+        m.querySelector("[data-override]").onclick = () => U.requirePin(() => { override = true; const p = f("price"); p.style.display = ""; p.value = recalc().price || ""; p.focus(); recalc(); }, "Цена хранения вне тарифа — только владелец");
+        m.querySelector("[data-pl]").onclick = () => U.plateKeyboard({ title: "Госномер", value: plate, onDone: (p) => { plate = p; m.querySelector("[data-pl]").innerHTML = U.plateHtml(p, true); } });
+        m.querySelector("[data-save]").onclick = () => {
+          const pay = f("pay").value;
+          const size = f("size").value.trim();
+          const d = { clientId: c ? c.id : null, plate, phone: f("phone").value, name: f("name").value, car: f("car").value, qty: f("qty").value, size: size && size !== f("radius").value ? size : f("radius").value, brand: f("brand").value, season: f("season").value, condition: f("condition").value, place: f("place").value.trim(), months: Number(f("months").value), rims: f("rims").checked, payNow: pay && pay !== "order" ? pay : null, radius: f("radius").value, price: override ? f("price").value : undefined, priceOverride: override };
+          if (!d.place) return (m.querySelector("[data-err]").textContent = "Укажите место на стеллаже");
+          const r = St.create(S, d, U.who());
+          if (!r.ok && !r.rec) return (m.querySelector("[data-err]").textContent = r.msg);
+          let note = r.ok ? "" : r.msg;
+          if (pay === "order" && o) { const a = SM.orders.addStorage(S, o, r.rec, U.who()); if (!a.ok) note = a.msg; }
+          close(); U.sq = ""; U.sf = "active"; SM.save(); U.go(pay === "order" && o ? "order" : "storage");
+          U.modal({ title: "✓ Комплект " + r.rec.no + " принят", body: (note ? '<div class="banner" style="margin:0 0 8px">' + esc(note) + "</div>" : "") + "Место: <b>" + esc(r.rec.place) + "</b>, срок до <b>" + SM.fmtDate(r.rec.until) + "</b>.<br>Стоимость: <b>" + SM.fmt(r.rec.price) + "</b>" + (r.rec.priceManual ? " (вручную, владелец)" : " по тарифу") + (pay === "order" && !note ? " — добавлено в чек заказа, без скидки." : r.rec.paid ? " — оплачено." : " — не оплачено."), foot: '<button class="btn" data-act="sLabel" data-id="' + r.rec.id + '">🖨 Этикетка</button><button class="btn" data-act="sAct" data-id="' + r.rec.id + '">🖨 Акт и договор</button><button class="btn primary" data-close>Готово</button>' });
+        };
+      } });
+  };
+  U.labelHtml = (r) => '<div class="label"><div style="font-size:12px;font-weight:700">ШИНАМАШИНА · ХРАНЕНИЕ</div><div class="no">' + r.no + '</div><div class="pl">' + esc(r.plate || "") + '</div><div class="ln"><b>' + r.qty + " × " + esc(r.size) + "</b></div><div class=\"ln\">" + esc([r.brand, r.rims ? "с дисками" : "без дисков", r.season].filter(Boolean).join(" · ")) + '</div><div class="ln">Место: <b style="font-size:20px">' + esc(r.place) + '</b></div><div class="ln">Клиент: ' + esc(r.name) + "<br>" + SM.phoneShow(r.phone) + '</div><div class="ln">Принято: ' + SM.fmtDate(r.from) + "<br>Срок до: <b>" + SM.fmtDate(r.until) + '</b></div><div class="ln" style="margin-top:auto;font-size:10px">демо-версия · данные вымышлены</div></div>';
+  /** Поля договора для подстановки из комплекта (паспорт, адрес, банк — не выдумываем, остаются линиями). */
+  U.contractMap = (r) => ({ "Номер договора": r.no, "Дата договора": SM.fmtDate(r.from), "ФИО клиента": r.name, "Телефон клиента": SM.phoneShow(r.phone), "Автомобиль": r.car, "Госномер": r.plate, "Дата начала": SM.fmtDate(r.from), "Дата окончания": SM.fmtDate(r.until), "Стоимость хранения": SM.fmt(r.price) + (r.months ? " за " + r.months + " мес." : ""), "Оплата": r.paid ? "оплачено " + SM.fmtDate(r.paidAt || r.from) : "оплата при выдаче", "Место": r.place, "Кол-во": r.qty + " шт.", "Размер": r.size, "Марка": r.brand, "Сезон": r.season, "Состояние": r.condition, "Диски": r.rims ? "с дисками" : "без дисков" });
+  U.actHtml = function (r, copy) {
+    const R = St.REQUISITES;
+    return '<div class="act"><div style="font-size:11px">' + R.name + ", ИНН " + R.inn + ", ОГРНИП " + R.ogrnip + "<br>" + R.address + ", тел. " + R.phone + '</div><h2>АКТ ПРИЁМА ШИН НА ХРАНЕНИЕ № ' + r.no + (copy ? " (" + copy + ")" : "") + "</h2><div>Дата: " + SM.fmtDate(r.from) + " · к договору хранения № " + r.no + "</div><div>Хранитель: " + R.name + "</div><div>Поклажедатель: " + esc(r.name) + ", тел. " + SM.phoneShow(r.phone) + ", автомобиль " + esc(r.car || "") + " " + esc(r.plate || "") + "</div>" +
+      "<table><tr><th>Кол-во</th><th>Размер</th><th>Бренд</th><th>Диски</th><th>Сезон</th><th>Состояние (износ)</th><th>Место</th></tr><tr><td>" + r.qty + "</td><td>" + esc(r.size) + "</td><td>" + esc(r.brand) + "</td><td>" + (r.rims ? "с дисками" : "без дисков") + "</td><td>" + esc(r.season) + "</td><td>" + esc(r.condition) + "</td><td>" + esc(r.place) + "</td></tr></table>" +
+      "<div>Видимые повреждения: ________________________________ Комплектующие (колпаки, болты, датчики): ________________</div>" +
+      "<div>Срок хранения: с " + SM.fmtDate(r.from) + " по " + SM.fmtDate(r.until) + ". Стоимость: " + SM.fmt(r.price) + (r.tariffText && !r.priceManual ? " (тариф " + esc(r.tariffText) + ")" : "") + " — " + (r.paid ? "оплачено" : "не оплачено") + '. Скидки на хранение не распространяются.</div><div style="margin:8px 0;padding:6px;border:1px dashed #000;font-size:12px">Условия хранения, выдачи и ответственности — в договоре хранения № ' + r.no + " (прилагается). Экземпляр клиента является квитанцией для получения шин.</div>" +
+      '<table style="border:0"><tr><td style="border:0;width:50%">Хранитель: ____________ / Мишахин А. А.</td><td style="border:0">Поклажедатель: ____________ / ' + esc(r.name) + "</td></tr></table>" +
+      '<div style="margin-top:8px;font-size:12px">Выдано «____» ____________ 20___ г. Претензий нет / есть: ____________ Получил: ____________</div><div style="font-size:10px;color:#666;margin-top:8px">Демо-версия, данные вымышлены. Договор — шаблон, юристом не проверен.</div></div>';
+  };
+  U.contractHtml = (r) => '<div class="act doc">' + SM.docFill(SM.DOCS.contract, U.contractMap(r)) + "</div>";
+  A.sAct = (el) => {
+    const r = U.S().storage.find((x) => x.id === el.dataset.id);
+    U.modal({ title: "Акт приёма и договор хранения " + r.no, wide: true, body: U.actHtml(r) + '<details class="consent-details" style="margin-top:10px"><summary>Договор хранения № ' + r.no + " (шаблон, юристом не проверен)</summary>" + '<div class="doc-scroll">' + U.contractHtml(r) + "</div></details>",
+      foot: '<button class="btn" data-close>Закрыть</button><button class="btn" data-pact>🖨 Только акт (2 экз.)</button><button class="btn primary" data-print>🖨 Акт + договор</button>',
+      mount: (m) => {
+        const acts = U.actHtml(r, "экземпляр хранителя") + '<div class="pb"></div>' + U.actHtml(r, "экземпляр клиента — квитанция");
+        m.querySelector("[data-pact]").onclick = () => U.print(acts, "size:A4;margin:12mm");
+        m.querySelector("[data-print]").onclick = () => U.print(acts + '<div class="pb"></div>' + U.contractHtml(r), "size:A4;margin:12mm");
+      } });
+  };
+  A.sLabel = (el) => { const r = U.S().storage.find((x) => x.id === el.dataset.id); U.modal({ title: "Этикетка " + r.no + " (75×120 мм)", body: '<div style="display:flex;justify-content:center">' + U.labelHtml(r) + "</div>", foot: '<button class="btn" data-close>Закрыть</button><button class="btn primary" data-print>🖨 Печать</button>', mount: (m) => (m.querySelector("[data-print]").onclick = () => U.print(U.labelHtml(r), "size:75mm 120mm;margin:3mm")) }); };
+  A.sPay = (el) => { const S = U.S(); const r = S.storage.find((x) => x.id === el.dataset.id); U.modal({ title: "Оплата хранения " + r.no + " — " + SM.fmt(r.price), body: '<div class="paybtns"><button class="pay cash" data-p="cash">Наличные</button><button class="pay card" data-p="card">Карта</button><button class="pay qr" data-p="qr">QR</button></div>', mount: (m, close) => m.addEventListener("click", (e) => { const b = e.target.closest("[data-p]"); if (!b) return; const res = St.pay(S, r, b.dataset.p); close(); if (!res.ok) return U.toast(res.msg, true); U.commit(); U.toast("Оплата хранения: чек №" + res.receipt.no + " (демо)"); }) }); };
+  A.sIssue = (el) => { const S = U.S(); const r = S.storage.find((x) => x.id === el.dataset.id); U.confirm("Выдать комплект " + r.no + "?", r.qty + " × " + esc(r.size) + ", место <b>" + esc(r.place) + "</b>" + (r.paid ? "" : '<div class="down" style="margin-top:8px">Хранение не оплачено (' + SM.fmt(r.price) + ") — сначала примите оплату.</div>"), "Выдать", () => { if (!r.paid && r.price > 0) return U.toast("Сначала оплата хранения", true); St.issue(S, r, U.who()); U.commit(); U.toast("Выдано"); }); };
+})();

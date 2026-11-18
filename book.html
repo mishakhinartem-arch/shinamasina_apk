@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Запись в шиномонтаж «Шинамашина» (демо)</title><link rel="icon" href="icon.svg"><meta name="theme-color" content="#ff6b00">
+<link rel="stylesheet" href="css/app.css">
+<style>.wrap{max-width:720px;margin:0 auto;padding:12px}.top{display:flex;align-items:center;gap:10px;margin-bottom:10px}.top img{height:44px}.sec{margin-top:12px}.opts{display:grid;grid-template-columns:1fr 1fr;gap:8px}.opt{min-height:64px;border-radius:12px;border:2px solid var(--border);background:#fff;font-weight:800;font-size:1rem;padding:6px 10px}.opt.on{border-color:var(--accent);background:var(--accent-soft);color:#9a3412}.days{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}.day{flex:none;min-width:76px;min-height:64px;border-radius:12px;border:2px solid var(--border);background:#fff;font-weight:800}.day.on{border-color:var(--accent);background:var(--accent-soft)}.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}@media(max-width:480px){.opts{grid-template-columns:1fr}}</style></head>
+<body><div class="wrap"><div class="top"><img src="logo-header.png" alt="Шинамашина"><div><div class="h1">Онлайн-запись</div><small class="muted">Андреевка, Алабушевская ул., 2 стр. 2 · +7 (995) 506-95-62</small></div></div>
+<div id="root"></div><div class="demo-foot">Демо-версия, данные вымышлены · запись сохраняется только в этом браузере · SMS не отправляются</div></div><div id="toast"></div><button id="kbd-done" type="button">Готово ⌨</button>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script><script src="js/consent.js"></script><script src="ui/base.js"></script>
+<script>
+(function(){
+  var S = SM.load(), st = { dir:null, day:SM.dayKey(Date.now()), time:null, plate:"" }, root = document.getElementById("root"), esc = SM.esc;
+  function render(){
+    S = SM.reload();
+    var days=[]; for (var i=0;i<(S.settings.bookingDays||14);i++){ var t=Date.now()+i*864e5; days.push(SM.dayKey(t)); }
+    var wd=["вс","пн","вт","ср","чт","пт","сб"];
+    var slots = SM.booking.slots(S, st.day);
+    root.innerHTML = '<div class="card"><div class="h2">1. Что нужно сделать</div><div class="opts">' + SM.booking.DIRECTIONS.map(function(d){return '<button class="opt '+(st.dir===d.key?'on':'')+'" data-dir="'+d.key+'">'+d.label+'</button>';}).join("") + '</div><div class="hint" style="margin-top:6px">Точную услугу и цену мастер подберёт на месте.</div></div>' +
+      '<div class="card sec"><div class="h2">2. День</div><div class="days">' + days.map(function(k){ var d=new Date(k+"T12:00"); return '<button class="day '+(st.day===k?'on':'')+'" data-day="'+k+'">'+(k===SM.dayKey(Date.now())?'Сегодня':wd[d.getDay()])+'<br>'+SM.pad(d.getDate())+'.'+SM.pad(d.getMonth()+1)+'</button>';}).join("") + '</div>' +
+      '<div class="h2" style="margin-top:12px">3. Время</div><div class="slots">' + (slots.length? slots.map(function(s){ var dis = s.past || s.free<=0; return '<button class="btn '+(st.time===s.time?'primary':'')+'" data-time="'+s.time+'"'+(dis?' disabled':'')+'>'+s.time+'</button>';}).join("") : '<div class="hint">Нет слотов</div>') + '</div></div>' +
+      '<div class="card sec"><div class="h2">4. Контакты</div><label class="fld">Имя</label><input class="inp" id="b-name" autocomplete="name"><label class="fld">Телефон</label><input class="inp" id="b-phone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00"><label class="fld">Госномер</label><button class="btn block ghost" id="b-plate" style="min-height:66px">'+SM.ui.plateHtml(st.plate,true)+'</button><label class="fld">Комментарий (необязательно)</label><input class="inp" id="b-com">' +
+      '<label class="check" style="margin-top:12px"><input type="checkbox" id="b-ok"> <span>Согласен на обработку персональных данных — <a href="#" id="b-text">текст согласия</a></span></label>' + SM.consentDetails("b-details") + '<div class="hint" style="margin-top:4px">Текст согласия — шаблон, юристом не проверен (демо).</div>' +
+      '<div id="b-err" class="down" style="font-weight:700;margin-top:8px"></div><button class="btn primary block" style="margin-top:10px;min-height:64px;font-size:1.15rem" id="b-send">Записаться</button></div>';
+    root.querySelectorAll("[data-dir]").forEach(function(b){ b.onclick=function(){ st.dir=b.dataset.dir; keep(render); }; });
+    root.querySelectorAll("[data-day]").forEach(function(b){ b.onclick=function(){ st.day=b.dataset.day; st.time=null; keep(render); }; });
+    root.querySelectorAll("[data-time]").forEach(function(b){ b.onclick=function(){ st.time=b.dataset.time; keep(render); }; });
+    document.getElementById("b-plate").onclick=function(){ SM.ui.plateKeyboard({ title:"Госномер", value:st.plate, onDone:function(p){ st.plate=p; document.getElementById("b-plate").innerHTML=SM.ui.plateHtml(p,true); } }); };
+    document.getElementById("b-text").onclick=function(e){ e.preventDefault(); var d=document.getElementById("b-details"); d.open=true; d.scrollIntoView({behavior:"smooth"}); };
+    if (st.form) { ["name","phone","com"].forEach(function(k){ document.getElementById("b-"+k).value = st.form[k]||""; }); document.getElementById("b-ok").checked = !!st.form.ok; }
+    document.getElementById("b-send").onclick=function(){
+      var err=document.getElementById("b-err"); if(!st.dir) return err.textContent="Выберите, что нужно сделать"; if(!st.time) return err.textContent="Выберите время";
+      if(!document.getElementById("b-ok").checked) return err.textContent="Без согласия на обработку ПД записаться нельзя";
+      S = SM.reload();
+      var r = SM.booking.create(S, { direction:st.dir, date:st.day, time:st.time, name:document.getElementById("b-name").value, phone:document.getElementById("b-phone").value, plate:st.plate, comment:document.getElementById("b-com").value, consent:true });
+      if(!r.ok) return err.textContent=r.msg;
+      SM.save();
+      root.innerHTML='<div class="card" style="text-align:center"><div class="h1">✓ Вы записаны</div><div style="margin-top:10px;font-size:1.2rem">'+SM.fmtDay(r.booking.date)+' в <b>'+r.booking.time+'</b></div><div style="margin-top:6px">'+esc(SM.booking.dirLabel(r.booking.direction))+'</div>' + (SM.booking.needsStorage(S, r.booking) ? '<div class="chip soon" style="margin-top:8px">Ваши шины у нас на хранении — подготовим их к приезду</div>' : '') + '<div class="hint" style="margin-top:10px">Если планы изменятся — позвоните: +7 (995) 506-95-62</div><button class="btn" style="margin-top:12px" onclick="location.reload()">Новая запись</button></div>';
+    };
+  }
+  function keep(f){ st.form = { name:val("b-name"), phone:val("b-phone"), com:val("b-com"), ok:(document.getElementById("b-ok")||{}).checked }; var y=window.scrollY; f(); window.scrollTo(0,y); }
+  function val(id){ var e=document.getElementById(id); return e? e.value : ""; }
+  render();
+})();
+</script></body></html>

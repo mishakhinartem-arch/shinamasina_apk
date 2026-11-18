@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Анкета клиента — Шинамашина (демо)</title><link rel="icon" href="icon.svg"><meta name="theme-color" content="#ff6b00">
+<link rel="stylesheet" href="css/app.css"><style>.wrap{max-width:640px;margin:0 auto;padding:12px}.top{display:flex;align-items:center;gap:10px;margin-bottom:10px}.top img{height:44px}</style></head>
+<body><div class="wrap"><div class="top"><img src="logo-header.png" alt="Шинамашина"><div class="h1">Анкета клиента</div></div><div id="root"></div>
+<div class="demo-foot">Демо-версия, данные вымышлены · анкета сохраняется только в этом браузере</div></div><div id="toast"></div><button id="kbd-done" type="button">Готово ⌨</button>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script><script src="js/consent.js"></script><script src="ui/base.js"></script>
+<script>
+(function(){
+  var root=document.getElementById("root"), plate="";
+  root.innerHTML='<div class="card"><div class="hint">Заполните, чтобы мы узнавали вас по номеру, хранили историю и давали скидку постоянным клиентам.</div><label class="fld">Имя</label><input class="inp" id="f-name"><label class="fld">Телефон</label><input class="inp" id="f-phone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00"><label class="fld">Госномер</label><button class="btn block ghost" id="f-plate" style="min-height:66px">'+SM.ui.plateHtml("",true)+'</button><label class="fld">Автомобиль</label><input class="inp" id="f-car" placeholder="Kia Rio"><label class="fld">Радиус колёс</label><select class="inp" id="f-r"><option value="">не знаю</option>'+SM.prices.RADII.map(function(r){return "<option>"+r+"</option>";}).join("")+'</select>'+
+   '<label class="check" style="margin-top:12px"><input type="checkbox" id="f-ok"> <span>Согласен на обработку персональных данных — <a href="#" id="f-text">текст согласия</a></span></label>'+SM.consentDetails("f-details")+'<div class="hint" style="margin-top:4px">Текст согласия — шаблон, юристом не проверен (демо).</div><div id="f-err" class="down" style="font-weight:700;margin-top:8px"></div><button class="btn primary block" id="f-send" style="margin-top:10px;min-height:64px" disabled>Отправить</button></div>';
+  var ok=document.getElementById("f-ok"), send=document.getElementById("f-send");
+  ok.onchange=function(){ send.disabled=!ok.checked; };
+  document.getElementById("f-text").onclick=function(e){ e.preventDefault(); var d=document.getElementById("f-details"); d.open=true; d.scrollIntoView({behavior:"smooth"}); };
+  document.getElementById("f-plate").onclick=function(){ SM.ui.plateKeyboard({ title:"Госномер", value:plate, onDone:function(p){ plate=p; document.getElementById("f-plate").innerHTML=SM.ui.plateHtml(p,true); } }); };
+  send.onclick=function(){
+    var err=document.getElementById("f-err"); if(!ok.checked) return err.textContent="Нужно согласие на обработку ПД";
+    var phone=document.getElementById("f-phone").value; if(SM.normPhone(phone).length!==11) return err.textContent="Укажите телефон полностью";
+    var S=SM.reload(), consent={ at:SM.now(), source:"анкета клиента" };
+    var d={ name:document.getElementById("f-name").value.trim(), phone:phone, plate:plate, car:document.getElementById("f-car").value.trim(), wheel_size:document.getElementById("f-r").value, consent:consent, source:"анкета" };
+    var r=SM.addClient(S,d);
+    if(!r.ok){ var c=r.dup; c.consent=consent; if(d.name) c.name=d.name; if(d.car) c.car=d.car; if(d.wheel_size) c.wheel_size=d.wheel_size; if(plate && !c.plate) c.plate=SM.normPlate(plate); }
+    SM.save();
+    root.innerHTML='<div class="card" style="text-align:center"><div class="h1">✓ Спасибо!</div><div style="margin-top:8px">Анкета сохранена'+(r.ok?'':' (обновили вашу карточку)')+'. Согласие на обработку ПД: '+SM.fmtDT(consent.at)+'.</div></div>';
+  };
+})();
+</script></body></html>

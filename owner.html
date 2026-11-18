@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Шинамашина — владелец (демо)</title><link rel="icon" href="icon.svg"><meta name="theme-color" content="#ff6b00">
+<link rel="stylesheet" href="css/app.css">
+<style>body{font-size:16px}.wrap{max-width:900px;margin:0 auto;padding:10px}.top{display:flex;align-items:center;gap:10px;padding:8px 0}.top img{height:40px}.kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}@media(max-width:640px){.kpis{grid-template-columns:1fr 1fr}.split{grid-template-columns:1fr}.kpi .v{font-size:1.15rem}}</style></head>
+<body><div class="wrap"><div class="top"><img src="logo-header.png" alt=""><div class="grow"><b>Владелец</b><br><small class="muted">Демо-версия, данные вымышлены</small></div><button class="btn sm" id="lock" style="display:none">🔒 Выйти</button></div><div id="root"></div>
+<div class="demo-foot"><a href="index.html">← касса</a> · демо-версия, данные вымышлены</div></div><div id="toast"></div>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script>
+<script src="ui/report-view.js"></script>
+<script>
+(function(){
+  var S = SM.load(), root = document.getElementById("root"), ok = false, mk = SM.monthKey(Date.now()), idle = 0, pin = "";
+  function login(){ root.innerHTML = '<div class="card" style="max-width:380px;margin:30px auto;text-align:center"><div class="h1">🔒 PIN владельца</div><div class="numdisp empty" id="pd" style="margin-top:12px">••••</div><div class="hint" style="margin-top:6px">Демо-PIN: <b>1234</b></div><div class="kbd"><div class="kr" style="grid-template-columns:repeat(3,1fr)">' + ["1","2","3","4","5","6","7","8","9","C","0","⌫"].map(function(k){return '<button class="key" data-n="'+k+'">'+k+'</button>';}).join("") + '</div></div></div>';
+    root.onclick = function(e){ var b = e.target.closest("[data-n]"); if(!b) return; var k=b.dataset.n; if(k==="C") pin=""; else if(k==="⌫") pin=pin.slice(0,-1); else pin+=k; var d=document.getElementById("pd"); d.textContent = pin ? "•".repeat(pin.length) : "••••";
+      if (pin === SM.load().settings.pin) { ok = true; pin=""; idle = Date.now(); render(); } else if (pin.length >= SM.load().settings.pin.length) { d.textContent = "Неверный PIN"; pin = ""; } };
+    document.getElementById("lock").style.display = "none"; }
+  function render(){
+    if(!ok) return login(); S = SM.reload(); root.onclick = null;
+    document.getElementById("lock").style.display = "";
+    var months=[]; for(var i=0;i<4;i++) months.push(SM.monthAdd(SM.monthKey(Date.now()),-i));
+    var low = SM.warehouse.low(S), st = S.storage.filter(function(r){return SM.storage.status(S,r)==="overdue";}).length, soon = S.storage.filter(function(r){return SM.storage.status(S,r)==="soon";}).length;
+    var sh = SM.shift.current(S), rev = sh ? SM.shift.revenue(S, sh.id) : null;
+    root.innerHTML = '<div class="card"><div class="cardh"><span>Сейчас</span><span>'+SM.fmtTime(Date.now())+'</span></div>' + (sh ? '<div class="kpis"><div class="kpi"><div class="l">Выручка смены</div><div class="v">'+SM.fmt(rev.total)+'</div></div><div class="kpi"><div class="l">Чеков</div><div class="v">'+rev.count+'</div></div><div class="kpi"><div class="l">В ящике</div><div class="v">'+SM.fmt(S.drawer.balance)+'</div></div><div class="kpi"><div class="l">Машин в работе</div><div class="v">'+SM.orders.open(S).length+'</div></div></div>' : '<div class="hint">Смена закрыта · в ящике '+SM.fmt(S.drawer.balance)+'</div>') +
+      '<div class="h2" style="margin-top:10px">ЗП за открытую смену</div>' + SM.realtimePayHtml(S) +
+      ((low.length||st||soon) ? '<div class="banner" style="margin:10px 0 0">' + (low.length ? '⚠ Склад: ' + low.map(function(i){return SM.esc(i.name);}).join(", ") + '. ' : '') + (st ? 'Хранение: просрочено '+st+'. ' : '') + (soon ? 'Истекает: '+soon+'.' : '') + '</div>' : '') + '</div>' +
+      '<div class="row" style="margin:12px 0 8px">' + months.map(function(m){return '<button class="btn sm '+(m===mk?'dark':'')+'" data-m="'+m+'">'+SM.monthName(m)+'</button>';}).join("") + '</div>' + SM.reportHtml(S, mk);
+    root.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ mk=b.dataset.m; render(); }; });
+  }
+  document.getElementById("lock").onclick = function(){ ok=false; login(); };
+  ["click","touchstart","scroll"].forEach(function(e){ document.addEventListener(e, function(){ idle = Date.now(); }, true); });
+  setInterval(function(){ if (ok && Date.now()-idle > 3*60e3) { ok=false; login(); } }, 5000);
+  SM.onSave(function(ext){ if(ext && ok) render(); });
+  login();
+})();
+</script></body></html>

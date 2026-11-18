@@ -1,0 +1,1 @@
+{ "name": "shinamashina-web-demo", "private": true, "scripts": { "test": "node --test tests/logic.test.js", "e2e": "cd tools && node e2e.js" } }

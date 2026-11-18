@@ -1,0 +1,175 @@
+// Сквозные сценарии в headless Chrome + скриншоты. Запуск: node tools/e2e.js (нужен сервер на :8765)
+const { chromium } = require("playwright-core");
+const XLSX = require("xlsx");
+const fs = require("fs");
+const BASE = process.env.BASE || "http://localhost:8765/";
+const OUT = __dirname + "/../screens/";
+const log = (...a) => console.log("•", ...a);
+function ok(c, m) { if (!c) throw new Error("ПРОВАЛ: " + m); log("OK", m); }
+(async () => {
+  const b = await chromium.launch({ executablePath: "/usr/bin/google-chrome", args: ["--no-sandbox"] });
+  const ctx = await b.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+  const p = await ctx.newPage();
+  const errs = []; p.on("pageerror", (e) => errs.push(e.message));
+  const shot = (n, pg) => (pg || p).screenshot({ path: OUT + n + ".png" });
+  const click = async (sel, pg) => { await (pg || p).locator(sel).first().click(); await (pg || p).waitForTimeout(150); };
+  const closeModal = async () => { await click(".modal-bg >> nth=-1 >> .modal-x"); };
+  const S = () => p.evaluate(() => JSON.parse(localStorage.getItem(SM.STORE_KEY)));
+  const typePlate = async (s) => { for (const ch of s) await click('.modal [data-k="' + ch + '"]'); await click('.modal [data-k="Готово"]'); };
+  const numpad = async (s) => { for (const ch of s) await click('.modal-bg >> nth=-1 >> [data-n="' + ch + '"]'); };
+
+  await p.goto(BASE + "index.html#kassa"); await p.waitForTimeout(500);
+  await shot("tablet-01-kassa");
+  // --- Закрыть текущую (демо) смену и открыть новую ---
+  await click('[data-v="shift"]'); await shot("tablet-02-shift");
+  await click('[data-act="shiftClose"]'); await click(".modal [data-ok]"); await shot("tablet-03-shift-closed");
+  await closeModal();
+  ok(!(await S()).shifts.some((s) => !s.endedAt), "смена закрыта");
+  await click('input[name=m][value=e1]'); await click('input[name=m][value=e2]');
+  await click('[data-act="factOpen"]'); const drawer = (await S()).drawer.balance; await numpad(String(Math.round(drawer))); await click(".modal [data-ok]");
+  await click('[data-act="shiftOpen"]');
+  ok((await S()).shifts.some((s) => !s.endedAt && s.att.length === 2), "смена открыта с 2 мастерами, факт ящика подтверждён");
+  // --- Заказ по госномеру, клиент подтягивается, услуги ---
+  await click('[data-v="kassa"]');
+  await click('.tile:has-text("Балансировка") [data-q="4"]');
+  ok(await p.locator('.modal:has-text("госномер")').count() > 0, "без заказа тап по услуге открывает ввод госномера");
+  ok(await p.locator('.modal [data-k="1"]').isDisabled(), "клавиатура: первая позиция — только буквы (цифры неактивны)");
+  await typePlate("А123ВС50");
+  let st = await S(); let o = st.orders.find((x) => x.plate === "А123ВС50" && x.status !== "done" && x.status !== "cancel");
+  ok(o && o.clientId, "заказ открыт по номеру, клиент найден");
+  ok(o.items.some((i) => i.name === "Балансировка" && i.qty === 4), "Балансировка ×4 в заказе");
+  await click('.tile.kit:has-text("Переобувка 4 колеса") .addkit');
+  await click('[data-act="runflat"]');
+  await shot("tablet-04-kassa-order");
+  // --- Корзина: статусы, лимит скидки, оплата ---
+  await click('[data-act="toCart"]');
+  await click('[data-s="work"]'); await click('[data-s="ready"]');
+  await click('[data-act="discount"]'); await click('.modal [data-mode="pct"]'); await numpad("50");
+  ok(await p.locator(".modal [data-ok]").isDisabled(), "скидка 50% сверх лимита — кнопка неактивна");
+  const hint = await p.locator(".modal [data-hint]").innerText(); ok(/лимит/i.test(hint), "понятное сообщение о лимите: " + hint.slice(0, 80));
+  await click('.modal [data-n="C"]'); await click('.modal [data-mode="rub"]'); await numpad("300"); await click(".modal [data-ok]");
+  await shot("tablet-05-order");
+  st = await S(); o = st.orders.find((x) => x.id === o.id);
+  ok(o.status === "ready" && o.discount && o.discount.value === 300, "статус «Готов», скидка 300 ₽ принята");
+  ok(o.history.length >= 6, "история заказа ведётся (" + o.history.length + " записей)");
+  const w1before = st.warehouse.items.find((i) => i.id === "w1").qty, w7before = st.warehouse.items.find((i) => i.id === "w7").qty;
+  await click('[data-p="cash"]'); await shot("tablet-06-pay-confirm"); await click(".modal [data-ok]");
+  await shot("tablet-07-receipt");
+  st = await S(); o = st.orders.find((x) => x.id === o.id);
+  ok(o.status === "done", "оплачено, статус «Выдан»");
+  const w1after = st.warehouse.items.find((i) => i.id === "w1").qty, w7after = st.warehouse.items.find((i) => i.id === "w7").qty;
+  const kits = o.items.filter((i) => i.name === "Переобувка 4 колеса").reduce((s, i) => s + i.qty, 0);
+  ok(w1after === w1before, "грузики с машины НЕ списались (остались " + w1after + " кор)");
+  ok(Math.abs(w7before - w7after - 20 * kits) < 0.01, "остальные нормы работают: паста −" + (w7before - w7after) + " г (переобувка " + kits + "×20)");
+  await closeModal();
+  // --- Мастер 2 ушёл, расчёт ---
+  await click('[data-v="shift"]'); await click('[data-act="mySalary"][data-id="e1"]'); await shot("tablet-08-my-salary"); await closeModal();
+  await click('[data-act="clockOut"][data-id="e2"]');
+  ok(await p.locator('.modal:has-text("Мастер 2 ушёл со смены?")').count() > 0, "вопрос «Мастер 2 ушёл со смены?»");
+  await click(".modal [data-ok]"); ok(await p.locator('.modal:has-text("Расчёт: Мастер 2")').count() > 0, "после «Ушёл» показан расчёт"); await shot("tablet-09-clockout"); await closeModal();
+  // --- Хранение ---
+  await click('[data-v="storage"]'); await shot("tablet-10-storage");
+  await click('[data-act="storageNew"]');
+  await click(".modal [data-pl]"); await typePlate("Е555КХ77");
+  await p.fill('.modal [data-f="phone"]', "+7 900 000-00-77"); await p.fill('.modal [data-f="name"]', "Тест (демо)"); await p.fill('.modal [data-f="size"]', "205/55 R16");
+  await p.fill('.modal [data-f="place"]', "В-3-2"); await p.selectOption('.modal [data-f="radius"]', "R16"); await p.selectOption('.modal [data-f="pay"]', "card");
+  ok(await p.locator('.modal [data-f="price"]').isHidden(), "поле цены хранения скрыто от кассира (только через PIN)");
+  let ptxt = await p.locator(".modal [data-price]").innerText(); ok(/3\s?500/.test(ptxt), "цена хранения подставилась по тарифу R16: " + ptxt);
+  await click('.modal [data-f="rims"]'); ptxt = await p.locator(".modal [data-price]").innerText(); ok(/4\s?000/.test(ptxt), "с дисками +500: " + ptxt);
+  await shot("tablet-20-storage-price");
+  await click(".modal [data-save]");
+  st = await S(); const rec = st.storage.find((r) => r.plate === "Е555КХ77"); ok(rec && rec.paid && rec.no && rec.price === 4000 && !rec.priceManual, "комплект принят по тарифу 4 000 ₽ и оплачен: " + rec.no);
+  await click('.modal [data-act="sLabel"]'); await shot("tablet-11-label"); await closeModal();
+  await click('.modal [data-act="sAct"]'); await click(".modal-bg >> nth=-1 >> details summary");
+  ok(await p.locator('.modal-bg >> nth=-1 >> text=ДОГОВОР ХРАНЕНИЯ ШИН').count() > 0, "в акте есть договор хранения (раскрывается)");
+  ok(await p.locator(".modal-bg >> nth=-1 >> b.filled", { hasText: rec.no }).count() > 0, "в договор подставлен номер комплекта");
+  await shot("tablet-24-act-contract"); await closeModal(); await closeModal();
+  // --- Хранение в чеке заказа со скидкой: скидка только на услуги ---
+  await click('[data-v="kassa"]'); await click('[data-act="newOrder"]'); await typePlate("Х700ХХ77");
+  await click('[data-act="rb"][data-r="R16"], [data-act="radius"][data-r="R16"]');
+  await click('.tile.kit:has-text("Переобувка 4 колеса") .addkit');
+  await click('[data-act="tab"][data-t="storage"]'); await click('.tile [data-act="storageNew"]');
+  ok((await p.locator('.modal [data-f="pay"]').inputValue()) === "order", "при открытом заказе оплата хранения по умолчанию — в чек заказа");
+  await p.fill('.modal [data-f="phone"]', "+7 900 000-00-70"); await p.fill('.modal [data-f="name"]', "Скидка Тест (демо)"); await p.fill('.modal [data-f="place"]', "В-4-1"); await p.selectOption('.modal [data-f="radius"]', "R16");
+  await click(".modal [data-save]"); await closeModal();
+  await click('[data-act="discount"]'); await click('.modal [data-mode="pct"]'); await numpad("10"); await click(".modal [data-ok]");
+  st = await S(); let o3 = st.orders.find((x) => x.plate === "Х700ХХ77" && x.status !== "done");
+  const svc = o3.items.filter((i) => !i.noDiscount).reduce((s, i) => s + i.price * i.qty, 0), sti = o3.items.find((i) => i.noDiscount);
+  ok(sti && sti.price === 3500, "хранение в чеке по тарифу 3 500 ₽");
+  const bigTotal = await p.locator(".big-total").first().innerText();
+  const expTotal = svc - Math.round(svc * 0.1) + 3500;
+  ok(bigTotal.replace(/\D/g, "") === String(expTotal), "К оплате " + bigTotal + " = услуги " + svc + " − 10% + хранение 3500 без скидки");
+  await shot("tablet-21-order-storage-discount");
+  await click('[data-p="card"]'); await click(".modal [data-ok]"); await shot("tablet-22-receipt-storage");
+  st = await S(); const rc = st.receipts[st.receipts.length - 1];
+  ok(rc.totals.discount === Math.round(svc * 0.1) && rc.totals.storage === 3500 && rc.total === expTotal, "чек: скидка " + rc.totals.discount + " только от услуг, хранение 3500 полностью");
+  ok(st.storage.find((r) => r.id === sti.storageId).paid, "комплект отмечен оплаченным по чеку заказа");
+  await closeModal();
+  // --- Запись через book.html ---
+  const bp = await ctx.newPage(); await bp.setViewportSize({ width: 390, height: 844 });
+  await bp.goto(BASE + "book.html"); await bp.waitForTimeout(300);
+  await click('[data-dir="storage"]', bp); await click('[data-day] >> nth=1', bp); await click('[data-time]:not([disabled]) >> nth=1', bp);
+  await bp.fill("#b-name", "Онлайн Клиент"); await bp.fill("#b-phone", "+7 900 000-00-55");
+  await click("#b-plate", bp); for (const ch of "Т456ТТ50") await click('.modal [data-k="' + ch + '"]', bp); await click('.modal [data-k="Готово"]', bp);
+  await click("#b-send", bp); ok(await bp.locator("text=Без согласия").count() > 0, "без галочки согласия запись не отправляется");
+  await click("#b-details summary", bp); ok(await bp.locator("#b-details >> text=Перечень персональных данных").isVisible(), "онлайн-запись: полный текст согласия раскрывается");
+  await click("#b-ok", bp); await bp.screenshot({ path: OUT + "iphone-05-book.png", fullPage: true }); await click("#b-send", bp);
+  ok(await bp.locator("text=Вы записаны").count() > 0, "клиент записался");
+  await p.reload(); await click('[data-v="bookings"]');
+  ok(await p.locator('text=Онлайн Клиент').count() > 0, "запись видна в кассе");
+  await shot("tablet-12-bookings");
+  await click('.list-item:has-text("Онлайн Клиент") [data-act="bAccept"]');
+  st = await S(); ok(st.orders.some((x) => x.plate === "Т456ТТ50" && x.status === "new"), "«Принять машину» по записи создал заказ");
+  // --- Админка: PIN, ЗП сейчас, отчёт, прайс Excel ---
+  await click('[data-v="admin"]'); ok(await p.locator('.modal:has-text("Демо-PIN")').count() > 0, "админка просит PIN");
+  await numpad("1234"); await shot("tablet-13-admin-pay");
+  await click('[data-t="slip"]'); await shot("tablet-14-payslip");
+  await click('[data-t="rep"]'); await shot("tablet-15-report");
+  await click('[data-t="price"]');
+  const [dl] = await Promise.all([p.waitForEvent("download"), click('[data-act="pxOut"]')]);
+  const f = "/tmp/prais.xlsx"; await dl.saveAs(f);
+  const wb = XLSX.readFile(f); const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+  ok(rows.length > 200, "прайс выгружен в .xlsx: " + rows.length + " строк");
+  rows.find((r) => r["Раздел"] === "Легковые" && r["Услуга"] === "Балансировка" && r["Радиус"] === "R16")["Цена, ₽"] = 350;
+  rows.find((r) => r["Услуга"] === "Ремонт жгутом")["Цена, ₽"] = 550;
+  const wb2 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2, XLSX.utils.json_to_sheet(rows), "Прайс"); XLSX.writeFile(wb2, "/tmp/prais2.xlsx");
+  await p.setInputFiles("#px-file", "/tmp/prais2.xlsx"); await p.waitForTimeout(400);
+  ok(await p.locator("text=Изменится цен: 2").count() > 0, "загрузка показала 2 изменения было → стало");
+  await shot("tablet-16-price-diff");
+  await click("#px-apply"); st = await S();
+  ok(st.prices.passenger.services["Балансировка"][3] === 350, "цены применены");
+  await click('[data-t="set"]'); await p.fill('[data-tar="R16"]', "3700"); await p.locator('[data-tar="R16"]').dispatchEvent("change"); await p.waitForTimeout(150);
+  st = await S(); ok(st.settings.storageTariff.R16 === 3700, "владелец поменял тариф хранения R16 → 3 700 ₽ в админке");
+  await p.locator("#tariff").scrollIntoViewIfNeeded(); await shot("tablet-25-admin-tariff");
+  await click('[data-v="kassa"]'); ok(await p.locator('.modal:has-text("PIN")').count() === 0, "выход из админки");
+  await click('[data-v="admin"]'); ok(await p.locator('.modal:has-text("Демо-PIN")').count() > 0, "PIN запрашивается снова после ухода из админки"); await closeModal();
+  // --- Склад ---
+  await click('[data-v="warehouse"]'); await shot("tablet-17-warehouse");
+  ok(await p.locator('tr:has-text("Грузики набивные (коробка)") [data-act="wBox"]').count() === 1 && await p.locator('tr:has-text("Грузики набивные") [data-act="wOff"]').count() === 0, "грузики: кнопка «Выдать коробку», граммов нет");
+  st = await S(); const boxBefore = st.warehouse.items.find((i) => i.id === "w1").qty;
+  await click('tr:has-text("Грузики набивные (коробка)") [data-act="wBox"]'); await shot("tablet-23-warehouse-box"); await click(".modal [data-ok]");
+  st = await S(); ok(st.warehouse.items.find((i) => i.id === "w1").qty === boxBefore - 1 && st.warehouse.moves[st.warehouse.moves.length - 1].type === "box", "выдана 1 коробка: " + boxBefore + " → " + (boxBefore - 1));
+  await shot("tablet-17-warehouse");
+  const [dl2] = await Promise.all([p.waitForEvent("download"), click('[data-act="wXls"]')]); ok(/\.xlsx$/.test(dl2.suggestedFilename()), "остатки склада выгружены: " + dl2.suggestedFilename());
+  // --- Клиенты ---
+  await click('[data-v="clients"]'); await p.fill("#c-q", "123"); await p.waitForTimeout(200);
+  ok(await p.locator('.list-item:has-text("Иван")').count() > 0, "поиск по средним 3 цифрам номера"); await click('.list-item:has-text("Иван")'); await shot("tablet-18-clients");
+  // --- Закрытие смены ---
+  await click('[data-v="shift"]'); await click('[data-act="shiftClose"]'); await click(".modal [data-ok]"); await shot("tablet-19-close-summary");
+  ok(await p.locator('.modal:has-text("Остаток в ящике после ЗП")').count() > 0, "итоги закрытия смены");
+  await closeModal();
+  // --- iPhone ---
+  const ph = await ctx.newPage(); await ph.setViewportSize({ width: 390, height: 844 });
+  await ph.goto(BASE + "index.html#kassa"); await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-01-kassa.png" });
+  await ph.goto(BASE + "owner.html"); await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-02-owner-pin.png" });
+  for (const ch of "1234") await click('[data-n="' + ch + '"]', ph);
+  await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-03-owner.png", fullPage: true });
+  await ph.goto(BASE + "client.html"); await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-04-client-form.png" });
+  await click("#f-details summary", ph); ok(await ph.locator("#f-details >> text=Цели обработки").isVisible(), "анкета: полный текст согласия раскрывается");
+  await ph.screenshot({ path: OUT + "iphone-08-consent.png" });
+  await ph.goto(BASE + "index.html#clients"); await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-06-clients.png" });
+  await ph.goto(BASE + "index.html#cars"); await ph.waitForTimeout(300); await ph.screenshot({ path: OUT + "iphone-07-cars.png" });
+  ok(errs.length === 0, "ошибок JS нет" + (errs.length ? ": " + errs.join("; ") : ""));
+  await b.close();
+  console.log("\nE2E: ВСЕ СЦЕНАРИИ ПРОЙДЕНЫ");
+})().catch((e) => { console.error(e.message); process.exit(1); });
