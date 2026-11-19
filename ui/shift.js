@@ -80,18 +80,29 @@
   };
   A.pastShifts = () => U.requirePin(() => { const S = U.S(); U.modal({ title: "Закрытые смены", wide: true, body: U.shiftsTable(S, 60) }); }, "История прошлых смен — только по PIN владельца");
 
-  /* ---------- Очередь ---------- */
+  /* ---------- Очередь: живая очередь (талоны с планшета), посты, ожидание ---------- */
   U.views.queue = function (el, S) {
-    const items = S.queue.items.filter((q) => q.status !== "done");
-    const waiting = items.filter((q) => q.status === "wait"), called = items.filter((q) => q.status === "called");
-    el.innerHTML = '<div class="split"><div class="card"><div class="row"><div class="h1 grow">Очередь с улицы</div><button class="btn" data-act="qAdd">+ Талон (демо)</button></div>' +
-      '<button class="btn primary block" style="min-height:76px;font-size:1.4rem;margin-top:12px" data-act="qNext"' + (waiting.length ? "" : " disabled") + ">Следующий →" + (waiting[0] ? " №" + waiting[0].no : "") + '</button><div class="h2" style="margin-top:12px">Ждут: ' + waiting.length + "</div>" +
-      (waiting.length ? waiting.map((q) => '<div class="list-item" style="cursor:default"><b style="font-size:1.6rem;width:70px">№' + q.no + '</b><span class="grow muted">с ' + SM.fmtTime(q.ts) + " · " + esc(q.source) + "</span></div>").join("") : '<div class="empty">Никого</div>') + "</div>" +
-      '<div class="card"><div class="h2">Вызваны — принять машину</div>' + (called.length ? called.map((q) => { const o = SM.orders.open(S).find((x) => x.queueNo === q.no); return '<div class="list-item" style="cursor:default"><b style="font-size:1.6rem;width:70px">№' + q.no + '</b><span class="grow">' + (o ? 'заказ №' + o.no + " · " + SM.orders.statusLabel(o.status) : "вызван " + SM.fmtTime(q.calledAt)) + "</span>" + (o ? '<button class="btn sm" data-act="carOpen" data-id="' + o.id + '">Открыть</button>' : '<button class="btn sm primary" data-act="qAccept" data-no="' + q.no + '">Принять машину</button><button class="btn sm ghost" data-act="qDrop" data-no="' + q.no + '">Ушёл</button>') + "</div>"; }).join("") : '<div class="empty">Нажмите «Следующий»</div>') +
-      '<div class="hint" style="margin-top:8px">Заказ откроется по номеру очереди, госномер и клиента можно добавить позже. Табло с голосом не делаем (вычеркнуто).</div></div></div>';
+    const L = SM.live, P = L.posts(S), today = L.today(S);
+    const waiting = L.waiting(S), called = today.filter((q) => q.status === "called");
+    const tk = SM.dayKey(SM.now()), nowMin = new Date(SM.now()).getHours() * 60 + new Date(SM.now()).getMinutes();
+    const bk = SM.booking.forDay(S, tk).filter((b) => b.status !== "done" && b.status !== "cancel");
+    const curBk = bk.filter((b) => { const [h, m] = b.time.split(":").map(Number); const t = h * 60 + m; return t <= nowMin + 30 && t + (S.settings.slotMin || 60) > nowMin - 30; });
+    const nextBk = bk.filter((b) => { const [h, m] = b.time.split(":").map(Number); return h * 60 + m > nowMin; })[0];
+    const postCard = (n) => {
+      if (P.bookingPosts.indexOf(n) >= 0) { const b = curBk[P.bookingPosts.indexOf(n)]; return '<div class="post bk"><div class="pn">Пост ' + n + '</div><div class="pt">Онлайн-запись</div><div class="ps">' + (b ? b.time + " · " + esc(b.plate || b.name) : "свободен" + (nextBk ? " · след. запись " + nextBk.time : "")) + "</div></div>"; }
+      const q = called.find((x) => x.post === n); return '<div class="post live"><div class="pn">Пост ' + n + '</div><div class="pt">Живая очередь</div><div class="ps">' + (q ? "талон №" + q.no + (q.plate ? " · " + esc(q.plate) : "") : "свободен") + "</div></div>";
+    };
+    el.innerHTML = '<div class="row" style="margin-bottom:8px"><div class="h1 grow">Живая очередь · ' + SM.fmtDay(tk) + '</div><span class="chip ' + (S.settings.seasonMode ? "ok" : "") + '">' + (S.settings.seasonMode ? "Сезон: " + P.total + " поста, " + P.booking + " под запись" : "Не сезон: очередь на все посты") + '</span><a class="btn" href="queue.html" target="_blank">Планшет очереди для клиентов ↗</a></div>' +
+      '<div class="posts">' + Array.from({ length: P.total }, (_, i) => postCard(i + 1)).join("") + "</div>" +
+      '<div class="split" style="margin-top:10px"><div class="card"><div class="row"><div class="h2 grow" style="margin:0">Ждут: ' + waiting.length + '</div><button class="btn sm" data-act="qAdd">+ Талон вручную</button></div>' +
+      '<button class="btn primary block" style="min-height:76px;font-size:1.4rem;margin-top:10px" data-act="qNext"' + (waiting.length ? "" : " disabled") + ">Следующий →" + (waiting[0] ? " №" + waiting[0].no + " на пост " + P.livePosts.join("/") : "") + "</button>" +
+      '<div style="margin-top:10px">' + (waiting.length ? waiting.map((q) => '<div class="list-item" style="cursor:default"><b style="font-size:1.6rem;width:70px">№' + q.no + '</b><span class="grow">' + (q.plate ? U.plateHtml(q.plate, true) + " " : "") + '<small class="muted">с ' + SM.fmtTime(q.ts) + " · " + esc(q.source) + '</small></span><span class="chip soon">' + L.waitLabel(L.waitMin(S, q.no)) + "</span></div>").join("") : '<div class="empty">Никого</div>') + "</div></div>" +
+      '<div class="card"><div class="h2">Вызваны — принять машину</div>' + (called.length ? called.map((q) => { const o = SM.orders.open(S).find((x) => x.queueNo === q.no && SM.dayKey(x.createdAt) === tk); return '<div class="list-item" style="cursor:default"><b style="font-size:1.6rem;width:70px">№' + q.no + '</b><span class="grow">' + (q.plate ? esc(q.plate) + " · " : "") + "пост " + (q.post || "?") + " · " + (o ? "заказ №" + o.no + " · " + SM.orders.statusLabel(o.status) : "вызван " + SM.fmtTime(q.calledAt)) + "</span>" + (o ? '<button class="btn sm" data-act="carOpen" data-id="' + o.id + '">Открыть</button>' : '<button class="btn sm primary" data-act="qAccept" data-no="' + q.no + '">Принять машину</button><button class="btn sm ghost" data-act="qDrop" data-no="' + q.no + '">Ушёл</button>') + "</div>"; }).join("") : '<div class="empty">Нажмите «Следующий»</div>') +
+      '<div class="hint" style="margin-top:8px">Нумерация талонов каждый день начинается с №1. Ожидание примерное: машин впереди × ' + (S.settings.avgServiceMin || 40) + " мин / постов живой очереди (" + P.live + "). Настройки — Админка → Настройки → «Сезон и посты». Табло с голосом не делаем.</div></div></div>";
   };
-  A.qAdd = () => { const S = U.S(); const q = SM.queueAdd(S, "улица"); U.commit(); U.toast("Талон №" + q.no); };
-  A.qNext = () => { const S = U.S(); const q = SM.queueNext(S); U.commit(); if (q) U.alert("Следующий", '<div class="qnum">№' + q.no + "</div>"); };
-  A.qDrop = (el) => { const S = U.S(); const q = S.queue.items.find((x) => x.no === Number(el.dataset.no)); q.status = "done"; U.commit(); };
-  A.qAccept = (el) => { const S = U.S(); const r = SM.orders.create(S, { queueNo: Number(el.dataset.no) }, U.who()); if (!r.ok) return U.toast(r.msg, true); S.ui.activeOrderId = r.order.id; SM.save(); U.go("kassa"); U.toast("Заказ по очереди №" + el.dataset.no + " открыт"); };
+  A.qAdd = () => U.plateKeyboard({ title: "Талон вручную — госномер (можно без номера)", extra: '<button class="btn block ghost" style="margin-top:10px" data-noplate>Без госномера</button>', onDone: (p) => add(p), onExtra: (e, close) => { if (e.target.closest("[data-noplate]")) { close(); add(""); } } });
+  function add(plate) { const S = U.S(); const q = SM.queueAdd(S, "касса", plate); U.commit(); U.toast("Талон №" + q.no + " · ожидание " + SM.live.waitLabel(SM.live.waitMin(S, q.no))); }
+  A.qNext = () => { const S = U.S(); const q = SM.queueNext(S); U.commit(); if (q) U.alert("Следующий", '<div class="qnum">№' + q.no + '</div><div style="text-align:center;font-size:1.3rem">' + (q.plate ? esc(q.plate) + " · " : "") + "проезжайте на пост " + q.post + "</div>"); };
+  A.qDrop = (el) => { const S = U.S(); SM.live.done(S, Number(el.dataset.no), SM.dayKey(SM.now())); U.commit(); };
+  A.qAccept = (el) => { const S = U.S(); const q = SM.live.find(S, Number(el.dataset.no)); const r = SM.orders.create(S, q && q.plate ? { plate: q.plate, queueNo: q.no } : { queueNo: Number(el.dataset.no) }, U.who()); if (!r.ok) return U.toast(r.msg, true); if (!r.order.queueNo) r.order.queueNo = Number(el.dataset.no); S.ui.activeOrderId = r.order.id; SM.save(); U.go("kassa"); U.toast("Заказ по очереди №" + el.dataset.no + " открыт"); };
 })();

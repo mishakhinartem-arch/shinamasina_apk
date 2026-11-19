@@ -14,10 +14,12 @@
       const [y, mo, d] = dayKey.split("-").map(Number);
       const ts = new Date(y, mo - 1, d, Math.floor(m / 60), m % 60).getTime();
       const taken = S.bookings.filter((x) => x.date === dayKey && x.time === time && x.status !== "cancel").length;
-      out.push({ time, ts, taken, free: Math.max(0, (st.slotCapacity || 1) - taken), past: ts < now + 30 * 60e3 });
+      out.push({ time, ts, taken, free: Math.max(0, B.capacity(S) - taken), past: ts < now + 30 * 60e3 });
     }
     return out;
   };
+  /** Машин на слот: в сезон — число постов под запись (2 из 3), иначе — настройка «машин на слот». */
+  B.capacity = (S) => (S.settings.seasonMode ? Math.max(1, Number(S.settings.bookingPosts) || 1) : Math.max(1, Number(S.settings.slotCapacity) || 1));
   B.create = function (S, d) {
     if (!d.consent) return { ok: false, msg: "Нужно согласие на обработку персональных данных" };
     if (!d.name || !d.name.trim()) return { ok: false, msg: "Укажите имя" };
@@ -29,6 +31,7 @@
     let client = (plate && SM.clientByPlate(S, plate)) || SM.clientByPhone(S, d.phone);
     if (!client) { const r = SM.addClient(S, { name: d.name, phone: d.phone, plate, consent: { at: SM.now(), source: "онлайн-запись" }, source: "онлайн-запись" }); client = r.client; }
     else if (!client.consent) client.consent = { at: SM.now(), source: "онлайн-запись" };
+    if (client && d.remind && SM.reminders) SM.reminders.setClient(S, client, d.remind.channel, d.remind.consent, "онлайн-запись");
     const b = { id: SM.uid("bk"), ts: SM.now(), date: d.date, time: d.time, direction: d.direction, name: d.name.trim(), phone: SM.normPhone(d.phone), plate, comment: d.comment || "", consentAt: SM.now(), clientId: client ? client.id : null, status: "new", orderId: null };
     S.bookings.push(b);
     return { ok: true, booking: b };
@@ -46,7 +49,5 @@
     b.status = "accepted"; b.orderId = res.order.id;
     return res;
   };
-  /* Очередь с улицы (демо). */
-  SM.queueAdd = function (S, source) { const it = { no: ++S.queue.seq, ts: SM.now(), status: "wait", source: source || "улица" }; S.queue.items.push(it); return it; };
-  SM.queueNext = function (S) { const w = S.queue.items.filter((x) => x.status === "wait").sort((a, b) => a.no - b.no)[0]; if (!w) return null; w.status = "called"; w.calledAt = SM.now(); return w; };
+  /* Очередь с улицы — js/queue.js (нумерация талонов каждый день с 1). */
 })(typeof window !== "undefined" ? window : globalThis);

@@ -53,11 +53,12 @@
     const pay = R.payrollAccrued(S, from, to);
     const exp = E.inRange(S, from, to); const expenses = sum(exp, (e) => e.amount);
     const material = SM.warehouse.costInRange(S, from, to);
+    const goods = sum(svc, (r) => SM.cart.goodsAmount(r)), goodsCost = Math.round(sum(svc, (r) => r.goodsCost || 0));
     const top = {}, radii = {};
     svc.forEach((r) => r.items.forEach((i) => { if (i.gift || i.noDiscount) return; const k = i.name; const t = (top[k] = top[k] || { name: k, qty: 0, sum: 0 }); t.qty += i.qty; t.sum += i.price * i.qty; if (i.radius) { const rr = (radii[i.radius] = radii[i.radius] || { name: i.radius, qty: 0, sum: 0 }); rr.qty += i.qty; rr.sum += i.price * i.qty; } }));
     const byCat = {}; exp.forEach((e) => (byCat[e.category] = (byCat[e.category] || 0) + e.amount));
     const discounts = sum(svc, (r) => (r.totals && r.totals.discount) || 0);
-    return { from, to, revenue, cash, cashless: card + qr, card, qr, services, storage, checks: svc.length, avgCheck: svc.length ? Math.round(services / svc.length) : 0, discounts, payroll: pay.total, staff: pay.per, expenses, expenseList: exp, expenseByCat: byCat, material, profit: Math.round(revenue - pay.total - expenses - material), topServices: Object.values(top).sort((a, b) => b.sum - a.sum).slice(0, 8), topRadii: Object.values(radii).sort((a, b) => b.qty - a.qty).slice(0, 10) };
+    return { from, to, revenue, cash, cashless: card + qr, card, qr, services, storage, checks: svc.length, avgCheck: svc.length ? Math.round(services / svc.length) : 0, discounts, payroll: pay.total, staff: pay.per, expenses, expenseList: exp, expenseByCat: byCat, material, goods, goodsCost, profit: Math.round(revenue - pay.total - expenses - material - goodsCost), topServices: Object.values(top).sort((a, b) => b.sum - a.sum).slice(0, 8), topRadii: Object.values(radii).sort((a, b) => b.qty - a.qty).slice(0, 10) };
   };
   R.month = function (S, mk) { const [a, b] = SM.monthRange(mk); return R.range(S, a, b); };
   /** Сравнение с прошлым месяцем на ту же дату (для текущего — за равное число дней). */

@@ -3,7 +3,7 @@
   const SM = root.SM;
   const KEY = "shinamashina_web_demo_v1";
   const listeners = [];
-  SM.STATE_VERSION = 2; // 2: тариф хранения, грузики коробками — старые демо-данные пересоздаются
+  SM.STATE_VERSION = 3; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь — старые демо-данные пересоздаются
   SM.DEFAULT_SETTINGS = {
     pin: "1234",
     discountMaxPct: 15,          // 0 = без ограничений
@@ -22,14 +22,26 @@
     storageTariff: { R13: 3000, R14: 3000, R15: 3200, R16: 3500, R17: 3800, R18: 4200, R19: 4600, R20: 5000, R21: 5500, R22: 6000 },
     storageSeasonMonths: 6,      // тариф указан за столько месяцев; другой срок — пропорционально
     storageRimsExtra: 500,       // доплата за комплект с дисками (колёса), ₽ за сезон
-    pinIdleMin: 3
+    pinIdleMin: 3,
+    // Сезон: 3 поста — 2 под онлайн-запись, остальные под живую очередь (талоны с планшета)
+    seasonMode: true,
+    posts: 3,
+    bookingPosts: 2,
+    avgServiceMin: 40,           // среднее время на машину для расчёта ожидания, мин
+    // Сетевой принтер талонов (ESC/POS по TCP; печатает только APK)
+    printerIp: "",
+    printerPort: 9100,
+    // Напоминания о записи (в демо — имитация отправки)
+    remindersOn: true,
+    remind24: true,
+    remind2: true
   };
   SM.emptyState = function () {
     return {
       version: SM.STATE_VERSION,
       createdAt: SM.now(),
       settings: JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), // глубокая копия: тариф хранения — вложенный объект
-      prices: JSON.parse(JSON.stringify(root.PRICES)),
+      prices: Object.assign(JSON.parse(JSON.stringify(root.PRICES)), { custom: [], hidden: [] }),
       employees: [],
       clients: [],
       orders: [],
@@ -39,7 +51,12 @@
       shifts: [],
       drawer: { balance: 0, moves: [] },
       collections: [],
-      queue: { seq: 0, items: [] },
+      queue: { seq: 0, items: [] },     // талоны: нумерация каждый день с 1 (по полю day)
+      products: [],                     // товары: цена продажи, закупка, остаток
+      productMoves: [],
+      paint: [],                        // заказ-наряды покраски дисков (оплата при выдаче)
+      paintSeq: 0,
+      reminders: { log: [] },           // журнал напоминаний о записи
       storage: [],
       storageSeq: 0,
       bookings: [],
@@ -81,7 +98,7 @@
   SM.addClient = function (S, data) {
     const dup = (data.phone && SM.clientByPhone(S, data.phone)) || (data.plate && SM.clientByPlate(S, data.plate));
     if (dup && !data.force) return { ok: false, dup: dup, msg: "Такой клиент уже есть: " + (dup.name || SM.phoneShow(dup.phone)) };
-    const c = { id: SM.uid("c"), name: (data.name || "").trim(), phone: SM.normPhone(data.phone), plate: SM.normPlate(data.plate), car: data.car || "", wheel_size: data.wheel_size || "", typeKey: data.typeKey || "", consent: data.consent || null, createdAt: SM.now(), source: data.source || "касса" };
+    const c = { id: SM.uid("c"), name: (data.name || "").trim(), phone: SM.normPhone(data.phone), plate: SM.normPlate(data.plate), car: data.car || "", wheel_size: data.wheel_size || "", typeKey: data.typeKey || "", consent: data.consent || null, notify: data.notify || null, createdAt: SM.now(), source: data.source || "касса" };
     S.clients.push(c);
     return { ok: true, client: c };
   };

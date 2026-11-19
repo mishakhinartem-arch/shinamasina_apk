@@ -139,21 +139,47 @@
   U.act.go = (el) => U.go(el.dataset.v);
   U.badges = function (S) {
     const tk = SM.dayKey(Date.now());
-    return { cars: SM.orders.open(S).length, queue: S.queue.items.filter((q) => q.status === "wait").length, storage: S.storage.filter((r) => ["soon", "overdue"].indexOf(SM.storage.status(S, r)) >= 0).length, warehouse: SM.warehouse.low(S).length, bookings: S.bookings.filter((b) => b.date === tk && b.status === "new").length };
+    return { cars: SM.orders.open(S).length + SM.paint.active(S).length, queue: SM.live.waiting(S).length, storage: S.storage.filter((r) => ["soon", "overdue"].indexOf(SM.storage.status(S, r)) >= 0).length, bookings: S.bookings.filter((b) => b.date === tk && b.status === "new").length };
   };
   U.renderHeader = function () {
     const S = U.S(), b = U.badges(S), sh = SM.shift.current(S);
     const opName = S.ui.operator && sh && SM.shift.atWork(S, sh).indexOf(S.ui.operator) >= 0 ? SM.empName(S, S.ui.operator) : "выбрать";
     $("#hdr").innerHTML = '<img class="brand" src="logo-header.png" alt="Шинамашина"><button class="op-chip" data-act="operator">Кассир<b>' + SM.esc(opName) + "</b></button><nav class=\"nav\">" +
-      U.NAV.map(([k, l]) => '<button class="nb ' + (U.view === k || (U.view === "order" && k === "kassa") ? "active" : "") + '" data-act="go" data-v="' + k + '">' + l + (b[k] ? '<span class="badge ' + (k === "warehouse" || k === "storage" ? "warn" : "") + '">' + b[k] + "</span>" : "") + "</button>").join("") + "</nav>";
-    const low = SM.warehouse.low(S);
-    $("#banner").innerHTML = low.length && U.view !== "warehouse" ? '<div class="banner">⚠ Заканчивается на складе: ' + low.map((i) => SM.esc(i.name) + " (" + SM.warehouse.fmtQty(i.qty, i.unit) + ")").join(", ") + '<button class="btn sm ghost" data-act="go" data-v="warehouse">Склад →</button></div>' : "";
+      U.NAV.map(([k, l]) => '<button class="nb ' + (U.view === k || (U.view === "order" && k === "kassa") ? "active" : "") + '" data-act="go" data-v="' + k + '">' + l + (b[k] ? '<span class="badge ' + (k === "warehouse" || k === "storage" ? "warn" : "") + '">' + b[k] + "</span>" : "") + "</button>").join("") + "</nav>" + (U.isStandalone() ? "" : '<button class="nb fs-btn" data-act="fullscreen" title="' + (document.fullscreenElement ? "Выйти из полного экрана" : "Во весь экран (без панели Chrome)") + '">' + (document.fullscreenElement ? "🗗" : "⛶") + "</button>");
+    // Предупреждения об остатках склада на кассе не показываем — только на странице владельца (owner.html).
+    $("#banner").innerHTML = "";
   };
   U.act.operator = function () {
     const S = U.S(), sh = SM.shift.current(S);
     if (!sh) return U.toast("Сначала откройте смену", true);
     const ids = SM.shift.atWork(S, sh);
     U.modal({ title: "Кто сейчас на кассе?", body: '<div class="hint" style="margin-bottom:8px">Имя пишется в историю заказа (кто добавил услугу, дал скидку, сменил статус).</div>' + ids.map((id) => '<button class="btn block ' + (S.ui.operator === id ? "primary" : "") + '" style="margin-bottom:8px" data-op="' + id + '">' + SM.esc(SM.empName(S, id)) + "</button>").join(""), mount: (el, close) => el.addEventListener("click", (e) => { const b = e.target.closest("[data-op]"); if (b) { S.ui.operator = b.dataset.op; close(); U.commit(); } }) });
+  };
+  /* ---------- Полный экран и установка как приложение (PWA) ---------- */
+  U.isStandalone = () => !!(window.matchMedia && (matchMedia("(display-mode: fullscreen)").matches || matchMedia("(display-mode: standalone)").matches));
+  U.isFullscreen = () => !!document.fullscreenElement || U.isStandalone();
+  U.act.fullscreen = function () {
+    const el = document.documentElement;
+    if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); return; }
+    if (!el.requestFullscreen) return U.alert("Полный экран", "Этот браузер не умеет полноэкранный режим. Установите кассу как приложение: меню Chrome ⋮ → «Добавить на главный экран».");
+    el.requestFullscreen({ navigationUI: "hide" }).catch((e) => U.toast("Полный экран не включился: " + e.message, true));
+  };
+  document.addEventListener("fullscreenchange", () => { if (U.renderHeader && document.getElementById("hdr")) U.renderHeader(); });
+  U.installEvt = null;
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); U.installEvt = e; });
+  window.addEventListener("appinstalled", () => { U.installEvt = null; U.toast("Касса установлена как приложение"); });
+  U.act.install = function () {
+    if (U.isStandalone()) return U.toast("Уже открыто как приложение");
+    if (U.installEvt) { U.installEvt.prompt(); U.installEvt.userChoice.then(() => { U.installEvt = null; }); return; }
+    U.alert("Установить кассу на планшет", '<ol style="margin-left:18px;line-height:1.5"><li>Откройте кассу в Chrome на планшете (по ссылке https://…).</li><li>Меню Chrome <b>⋮</b> → <b>«Добавить на главный экран»</b> (или «Установить приложение»).</li><li>Запускайте кассу с иконки «Касса демо» — она откроется <b>во весь экран, без адресной строки и вкладок Chrome</b>.</li></ol><div class="hint" style="margin-top:8px">Кнопка ⛶ в шапке включает полный экран и без установки (выход — жест «назад» или та же кнопка). Режим киоска Android лучше включать в APK.</div>');
+  };
+  /* ---------- Печать на сетевой принтер (только APK) ---------- */
+  U.netPrint = function (lines, title) {
+    const S = U.S(); const r = SM.printer.print(S, lines);
+    if (r.ok) { U.toast("Отправлено на принтер " + S.settings.printerIp); return r; }
+    const preview = '<pre class="ticket-prev">' + lines.map((l) => { l = typeof l === "string" ? { text: l } : l; const t = SM.esc(l.text || ""); return '<div style="text-align:' + (l.align || "left") + ";" + (l.big ? "font-size:1.6em;" : "") + (l.bold ? "font-weight:900" : "") + '">' + (t || "&nbsp;") + "</div>"; }).join("") + "</pre>";
+    U.modal({ title: title || "Печать", body: '<div class="banner" style="margin:0 0 10px">' + SM.esc(r.msg) + "</div>" + (r.reason === "browser" ? '<div class="hint" style="margin-bottom:8px">Так талон будет выглядеть на ленте 58/80 мм (ESC/POS, ' + r.bytes.length + " байт подготовлено):</div>" + preview : "") });
+    return r;
   };
   U.render = function () {
     U.renderHeader();
@@ -167,6 +193,9 @@
     const h = (location.hash || "").slice(1);
     U.view = U.views[h] && h !== "admin" ? h : "kassa";
     U.render();
-    setInterval(() => { if (["shift", "admin", "cars"].indexOf(U.view) >= 0 && !document.querySelector(".modal-bg") && !document.body.classList.contains("typing")) U.render(); }, 30000);
+    // Напоминания о записи — автоматически раз в минуту (в демо отправка имитируется)
+    U.runReminders = function () { const S = U.S(); const n = SM.reminders.run(S); if (!n.length) return; SM.save(); n.filter((e) => e.status === "sent").forEach((e) => U.toast("🔔 Напоминание " + SM.reminders.kindLabel(e.kind) + " → " + e.name + " (" + SM.reminders.channelLabel(e.channel) + ", имитация)")); if (U.view === "bookings" && !document.querySelector(".modal-bg")) U.render(); };
+    U.runReminders(); setInterval(U.runReminders, 60000);
+    setInterval(() => { if (["shift", "admin", "cars", "queue"].indexOf(U.view) >= 0 && !document.querySelector(".modal-bg") && !document.body.classList.contains("typing")) U.render(); }, 30000);
   };
 })();

@@ -8,19 +8,19 @@
    */
   C.totals = function (order, settings) {
     settings = settings || SM.DEFAULT_SETTINGS;
-    let base = 0, sb = 0, storage = 0;
-    (order.items || []).forEach((i) => { const l = (Number(i.price) || 0) * (Number(i.qty) || 0); if (i.noDiscount) { storage += l; return; } base += l; if (i.surchargeEligible) sb += l; });
+    let base = 0, sb = 0, storage = 0, goods = 0;
+    (order.items || []).forEach((i) => { const l = (Number(i.price) || 0) * (Number(i.qty) || 0); if (i.goods) { goods += l; return; } if (i.noDiscount) { storage += l; return; } base += l; if (i.surchargeEligible) sb += l; });
     const surcharge = order.runflat ? Math.round(sb * (settings.surchargePct || 20) / 100) : 0;
     // Скидки (постоянному и ручная) считаются только от услуг; позиции хранения (noDiscount) — без скидки.
     const discountBase = Math.round(base + surcharge);
-    const subtotal = discountBase + Math.round(storage);
+    const subtotal = discountBase + Math.round(storage) + Math.round(goods);
     const loyalty = order.loyalty ? Math.round(discountBase * (settings.loyaltyPct || 10) / 100) : 0;
     let manual = 0;
     const d = order.discount;
     if (d && d.value > 0) manual = d.type === "pct" ? Math.round(discountBase * d.value / 100) : Math.round(d.value);
     let discount = Math.min(discountBase, loyalty + manual);
     const services = discountBase - discount;
-    return { base: Math.round(base), surchargeBase: Math.round(sb), surcharge, discountBase, storage: Math.round(storage), subtotal, loyalty, manual, discount, discountPct: discountBase > 0 ? (discount / discountBase) * 100 : 0, services, total: Math.round(services + storage), count: (order.items || []).reduce((s, i) => s + (i.gift || i.noDiscount ? 0 : i.qty), 0) };
+    return { base: Math.round(base), surchargeBase: Math.round(sb), surcharge, discountBase, storage: Math.round(storage), subtotal, loyalty, manual, discount, discountPct: discountBase > 0 ? (discount / discountBase) * 100 : 0, services, goods: Math.round(goods), total: Math.round(services + storage + goods), count: (order.items || []).reduce((s, i) => s + (i.gift || i.noDiscount || i.goods ? 0 : i.qty), 0) };
   };
   /** Лимит скидки: max % и max ₽ (₽ пересчитываются в % от заказа). 0 = без ограничений. */
   C.discountLimit = function (settings, subtotal) {
@@ -44,6 +44,8 @@
     return { ok: true, totals: t, limit: lim };
   };
   /** Сумма чека за услуги (без хранения) — база для процента мастеров и выручки «услуги». */
-  C.serviceAmount = (r) => (r.kind === "service" ? r.total - ((r.totals && r.totals.storage) || 0) : 0);
+  C.serviceAmount = (r) => (r.kind === "service" ? r.total - ((r.totals && r.totals.storage) || 0) - ((r.totals && r.totals.goods) || 0) : 0);
+  /** Товары в чеке: без скидок, не в базе процента мастеров. */
+  C.goodsAmount = (r) => (r.totals && r.totals.goods) || 0;
   C.storageAmount = (r) => (r.kind === "storage" ? r.total : (r.totals && r.totals.storage) || 0);
 })(typeof window !== "undefined" ? window : globalThis);

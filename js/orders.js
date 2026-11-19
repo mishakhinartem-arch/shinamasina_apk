@@ -52,14 +52,17 @@
   };
   O.storageInOrder = (S, recId) => O.open(S).find((x) => x.items.some((i) => i.storageId === recId)) || null;
   O.setQty = function (S, o, itemId, qty, who) {
-    const it = o.items.find((i) => i.id === itemId); if (!it) return;
-    if (it.storageId && qty > 1) return; // хранение — одна позиция на комплект
-    if (qty <= 0) { o.items = o.items.filter((i) => i.id !== itemId); O.log(o, who, "Убрано: " + it.name + " ×" + it.qty); return; }
+    const it = o.items.find((i) => i.id === itemId); if (!it) return { ok: false };
+    if (it.storageId && qty > 1) return { ok: false, msg: "Хранение — одна позиция на комплект" };
+    if (qty <= 0) { o.items = o.items.filter((i) => i.id !== itemId); O.log(o, who, "Убрано: " + it.name + " ×" + it.qty); return { ok: true }; }
+    if (it.productId && qty > it.qty) { const p = SM.products.get(S, it.productId); if (!p || qty > p.qty) return { ok: false, msg: it.name + ": на складе только " + (p ? p.qty : 0) + " шт" }; }
     O.log(o, who, "Количество «" + it.name + "»: " + it.qty + " → " + qty); it.qty = qty;
+    return { ok: true };
   };
   O.setPrice = function (S, o, itemId, price, who) {
     const it = o.items.find((i) => i.id === itemId); if (!it) return { ok: false };
     if (it.storageId) return { ok: false, msg: "Цена хранения фиксированная — меняется в админке (тариф)" };
+    if (it.productId) return { ok: false, msg: "Цена товара меняется владельцем в админке (Услуги и товары)" };
     price = Math.round(Number(price)); if (!(price > 0)) return { ok: false, msg: "Цена должна быть больше 0 ₽" };
     O.log(o, who, "Цена «" + it.name + "»: " + SM.fmt(it.price) + " → " + SM.fmt(price)); it.price = price; return { ok: true };
   };
@@ -90,11 +93,12 @@
   O.pay = function (S, o, payment, who) {
     if (["cash", "card", "qr"].indexOf(payment) < 0) return { ok: false, msg: "Способ оплаты?" };
     const sh = SM.shift.current(S); if (!sh) return { ok: false, msg: "Сначала откройте смену (вкладка «Смена»)" };
-    if (!o.items.some((i) => !i.gift && i.price > 0)) return { ok: false, msg: "Добавьте услугу с ценой. Пакеты в подарок сами по себе не пробиваются." };
+    if (!o.items.some((i) => !i.gift && i.price > 0)) return { ok: false, msg: "Добавьте услугу или товар с ценой. Пакеты в подарок сами по себе не пробиваются." };
     const chk = SM.cart.checkDiscount(o, S.settings); if (!chk.ok) return { ok: false, msg: chk.msg };
     const t = chk.totals;
     const stRecs = o.items.filter((i) => i.storageId).map((i) => S.storage.find((x) => x.id === i.storageId));
     if (stRecs.some((x) => !x || x.paid)) return { ok: false, msg: "Хранение в заказе уже оплачено или не найдено — уберите эту позицию" };
+    const stock = SM.products.checkStock(S, o.items); if (!stock.ok) return stock;
     const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: o.id, kind: "service", payment, total: t.total, totals: t, items: o.items.map((i) => Object.assign({}, i)), runflat: o.runflat, loyalty: o.loyalty, clientId: o.clientId, plate: o.plate, masters: o.masters.slice(), who: who || "" };
     S.receipts.push(r);
     if (payment === "cash") SM.shift.drawerMove(S, t.total, "sale", "Чек №" + r.no, r.ts);
@@ -103,7 +107,8 @@
     O.log(o, who, "Оплачено: " + ({ cash: "наличные", card: "карта", qr: "QR / СБП" })[payment] + " " + SM.fmt(t.total) + " · чек №" + r.no + " (демо, Эвотор не подключён)");
     const wo = SM.warehouse.autoWriteOff(S, r);
     r.materialCost = wo.cost;
-    if (o.queueNo) { const q = S.queue.items.find((x) => x.no === o.queueNo && x.status !== "done"); if (q) q.status = "done"; }
+    r.goodsCost = SM.products.writeOff(S, r);
+    if (o.queueNo) SM.live.done(S, o.queueNo, SM.dayKey(o.createdAt));
     if (o.bookingId) { const b = S.bookings.find((x) => x.id === o.bookingId); if (b) b.status = "done"; }
     return { ok: true, receipt: r, writeoff: wo };
   };
@@ -113,7 +118,7 @@
     const last = SM.clientVisits(S, o.clientId)[0]; if (!last) return { ok: false, msg: "У клиента ещё не было визитов" };
     let n = 0;
     last.items.forEach((i) => {
-      if (i.storageId || i.key === "storage") return;
+      if (i.storageId || i.key === "storage" || i.productId || i.key === "paint") return;
       const tile = SM.prices.find(S.prices, i.key, i.typeKey || "passenger", i.radius || "R16");
       if (!tile) return;
       const res = O.addItem(S, o, tile, i.qty, { radius: i.radius, typeKey: i.typeKey }, who, i.manual ? i.price : undefined);

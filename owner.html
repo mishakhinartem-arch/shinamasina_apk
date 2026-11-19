@@ -5,7 +5,7 @@
 <style>body{font-size:16px}.wrap{max-width:900px;margin:0 auto;padding:10px}.top{display:flex;align-items:center;gap:10px;padding:8px 0}.top img{height:40px}.kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}@media(max-width:640px){.kpis{grid-template-columns:1fr 1fr}.split{grid-template-columns:1fr}.kpi .v{font-size:1.15rem}}</style></head>
 <body><div class="wrap"><div class="top"><img src="logo-header.png" alt=""><div class="grow"><b>Владелец</b><br><small class="muted">Демо-версия, данные вымышлены</small></div><button class="btn sm" id="lock" style="display:none">🔒 Выйти</button></div><div id="root"></div>
 <div class="demo-foot"><a href="index.html">← касса</a> · демо-версия, данные вымышлены</div></div><div id="toast"></div>
-<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/queue.js"></script><script src="js/printer.js"></script><script src="js/products.js"></script><script src="js/paint.js"></script><script src="js/reminders.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script>
 <script src="ui/report-view.js"></script>
 <script>
 (function(){
@@ -16,15 +16,34 @@
     document.getElementById("lock").style.display = "none"; }
   function render(){
     if(!ok) return login(); S = SM.reload(); root.onclick = null;
+    if (SM.reminders.run(S).length) { SM.save(); S = SM.reload(); }
     document.getElementById("lock").style.display = "";
     var months=[]; for(var i=0;i<4;i++) months.push(SM.monthAdd(SM.monthKey(Date.now()),-i));
     var low = SM.warehouse.low(S), st = S.storage.filter(function(r){return SM.storage.status(S,r)==="overdue";}).length, soon = S.storage.filter(function(r){return SM.storage.status(S,r)==="soon";}).length;
     var sh = SM.shift.current(S), rev = sh ? SM.shift.revenue(S, sh.id) : null;
     root.innerHTML = '<div class="card"><div class="cardh"><span>Сейчас</span><span>'+SM.fmtTime(Date.now())+'</span></div>' + (sh ? '<div class="kpis"><div class="kpi"><div class="l">Выручка смены</div><div class="v">'+SM.fmt(rev.total)+'</div></div><div class="kpi"><div class="l">Чеков</div><div class="v">'+rev.count+'</div></div><div class="kpi"><div class="l">В ящике</div><div class="v">'+SM.fmt(S.drawer.balance)+'</div></div><div class="kpi"><div class="l">Машин в работе</div><div class="v">'+SM.orders.open(S).length+'</div></div></div>' : '<div class="hint">Смена закрыта · в ящике '+SM.fmt(S.drawer.balance)+'</div>') +
       '<div class="h2" style="margin-top:10px">ЗП за открытую смену</div>' + SM.realtimePayHtml(S) +
-      ((low.length||st||soon) ? '<div class="banner" style="margin:10px 0 0">' + (low.length ? '⚠ Склад: ' + low.map(function(i){return SM.esc(i.name);}).join(", ") + '. ' : '') + (st ? 'Хранение: просрочено '+st+'. ' : '') + (soon ? 'Истекает: '+soon+'.' : '') + '</div>' : '') + '</div>' +
+      ((st||soon) ? '<div class="banner" style="margin:10px 0 0">' + (st ? 'Хранение: просрочено '+st+'. ' : '') + (soon ? 'Истекает: '+soon+'.' : '') + '</div>' : '') + '</div>' +
+      warnHtml(S) + paintHtml(S) + remindHtml(S) +
       '<div class="row" style="margin:12px 0 8px">' + months.map(function(m){return '<button class="btn sm '+(m===mk?'dark':'')+'" data-m="'+m+'">'+SM.monthName(m)+'</button>';}).join("") + '</div>' + SM.reportHtml(S, mk);
     root.querySelectorAll("[data-m]").forEach(function(b){ b.onclick=function(){ mk=b.dataset.m; render(); }; });
+  }
+  // Предупреждения об остатках — только здесь (на кассе их нет)
+  function warnHtml(S){
+    var low = SM.warehouse.low(S), lowP = SM.products.low(S);
+    if (!low.length && !lowP.length) return '<div class="card" style="margin-top:10px"><div class="cardh"><span>Склад</span><span>ok</span></div><div class="hint">Всё выше минимальных остатков.</div></div>';
+    return '<div class="card" style="margin-top:10px;border-color:#fdba74"><div class="cardh"><span>⚠ Заканчивается — пора заказать</span><span>'+(low.length+lowP.length)+'</span></div>' +
+      low.map(function(i){return '<div class="kv"><span>'+SM.esc(i.name)+' <small class="muted">расходник</small></span><b>'+SM.warehouse.fmtQty(i.qty,i.unit)+' <small class="muted">/ мин. '+SM.warehouse.fmtQty(i.min,i.unit)+'</small></b></div>';}).join("") +
+      lowP.map(function(p){return '<div class="kv"><span>'+SM.esc(p.name)+' <small class="muted">товар</small></span><b>'+p.qty+' '+SM.esc(p.unit)+' <small class="muted">/ мин. '+p.min+'</small></b></div>';}).join("") + '</div>';
+  }
+  function paintHtml(S){
+    var list = SM.paint.active(S);
+    return '<div class="card" style="margin-top:10px"><div class="cardh"><span>🎨 В покраске</span><span>'+list.length+' · долг клиентов '+SM.fmt(SM.paint.due(S))+'</span></div>' + (list.length ? list.map(function(p){ var t = SM.paint.totals(S,p); return '<div class="kv"><span><b>'+SM.paint.title(p)+'</b> · '+SM.esc(p.name||'')+(p.phone?' · '+SM.phoneShow(p.phone):'')+(p.plate?' · '+SM.esc(p.plate):'')+'<br><small class="muted">сдал '+SM.fmtDate(p.createdAt)+' · '+p.disks+' диск(а) «'+SM.esc(p.color)+'» · '+SM.paint.STATUS[p.status]+'</small></span><b>'+SM.fmt(t.total)+'</b></div>'; }).join("") : '<div class="hint">Нарядов нет</div>') + '<div class="hint" style="margin-top:6px">Оплата при выдаче — до этого сумма висит долгом клиента.</div></div>';
+  }
+  function remindHtml(S){
+    var log = S.reminders.log.slice().sort(function(a,b){return b.ts-a.ts;}).slice(0,30), RM = SM.reminders;
+    return '<div class="card" style="margin-top:10px"><div class="cardh"><span>🔔 Напоминания о записи — журнал</span><span>'+S.reminders.log.length+'</span></div><div class="hint" style="margin-bottom:6px">Автоматически за 24 ч и за 2 ч до визита. <b>Демо: отправка имитируется</b>, сообщения никуда не уходят. Боты MAX/Telegram и SMS-шлюз подключим позже.</div>' +
+      (log.length ? log.map(function(e){ return '<details class="kv" style="display:block"><summary style="display:flex;justify-content:space-between;gap:8px;cursor:pointer"><span>'+SM.fmtDT(e.ts)+' · '+SM.esc(e.name)+' · '+RM.kindLabel(e.kind)+' · '+RM.channelLabel(e.channel)+'</span><b class="'+(e.status==='sent'?'up':'down')+'">'+RM.STATUS_RU[e.status]+'</b></summary><div class="hint">Визит: '+SM.fmtDT(e.visitAt)+(e.reason?' · причина: '+SM.esc(e.reason):'')+'<br>Текст: «'+SM.esc(e.text)+'»</div></details>'; }).join("") : '<div class="hint">Отправок пока не было</div>') + '</div>';
   }
   document.getElementById("lock").onclick = function(){ ok=false; login(); };
   ["click","touchstart","scroll"].forEach(function(e){ document.addEventListener(e, function(){ idle = Date.now(); }, true); });

@@ -32,6 +32,11 @@
     const plate = () => L[Math.floor(rnd() * 12)] + String(100 + Math.floor(rnd() * 899)) + L[Math.floor(rnd() * 12)] + L[Math.floor(rnd() * 12)] + pick(["50", "750", "790", "77", "799", "190"]);
     names.forEach((n, i) => { const r = SM.addClient(S, { name: n + " (демо)", phone: "7900000" + "00" + String(i + 1).padStart(2, "0"), plate: i === 0 ? "А123ВС50" : plate(), car: pick(["Лада Веста", "Kia Rio", "Hyundai Creta", "Toyota RAV4", "VW Polo", "Skoda Octavia", "Haval Jolion"]), wheel_size: pick(["R15", "R16", "R16", "R17", "R18"]), typeKey: pick(["passenger", "passenger", "crossover", "jeep"]), consent: i % 3 ? { at: day0, source: "анкета" } : null }); r.client.createdAt = day0; });
     S.clients[0].wheel_size = "R16"; S.clients[0].typeKey = "passenger";
+    // Напоминания о записи: у части клиентов выбран канал и есть согласие (вымышленные)
+    S.clients.forEach((c, i) => { if (i % 4 !== 3) { SM.reminders.setClient(S, c, ["max", "telegram", "sms"][i % 3], i % 5 !== 4, "анкета"); if (c.notify.at) c.notify.at = day0; } });
+    // Товары (вымышленные цены): продажа в чек со списанием
+    [["Вентиль хромированный, компл. 4 шт", 400, 180, 60, 10], ["Колпачки на ниппель, металл, 4 шт", 300, 90, 50, 10], ["Секретки на колёса", 1500, 850, 12, 3], ["Щётки стеклоочистителя, пара", 900, 450, 14, 4], ["Незамерзайка 5 л", 450, 260, 40, 10], ["Герметик для шин (баллон)", 700, 380, 3, 4]]
+      .forEach((x) => SM.products.add(S, { name: x[0], price: x[1], cost: x[2], qty: x[3], min: x[4] }));
     const SVC = [["r:Переобувка 4 колеса", 38, 1], ["r:Комплекс без смены резины", 9, 1], ["r:Снятие и установка 4-х колёс", 7, 1], ["r:Итого за 1 колесо", 9, 2], ["r:Балансировка", 9, 4], ["r:Монтаж", 3, 2], ["f:Ремонт жгутом", 8, 1], ["f:Ремонт грибком", 5, 1], ["f:Обработка герметиком", 4, 4], ["f:Подкачка", 4, 1], ["f:Утилизация б/у автошины", 2, 4], ["f:Проверка балансировки", 2, 4]];
     function makeSale(ts, sh) {
       at(ts);
@@ -46,6 +51,7 @@
       const tile = SM.prices.find(S.prices, k[0], typeKey, radius);
       SM.orders.addItem(S, o, tile, k[2] === 4 ? pick([1, 2, 4]) : k[2] === 2 ? pick([1, 2]) : 1, { radius, typeKey }, "Касса");
       if (rnd() < 0.1) SM.orders.addItem(S, o, SM.prices.find(S.prices, pick(["f:Обработка герметиком", "f:Утилизация б/у автошины", "f:Подкачка"]), typeKey, radius), pick([1, 4]), { radius, typeKey }, "Касса");
+      if (rnd() < 0.06) { const pr = S.products[Math.floor(rnd() * 5)]; SM.products.addToOrder(S, o, pr.id, 1, "Касса"); }
       if (k[0] === "r:Переобувка 4 колеса" && rnd() < 0.4) SM.orders.addItem(S, o, SM.prices.find(S.prices, "gift", typeKey, radius), 4, {}, "Касса");
       if (rnd() < 0.07) o.runflat = true;
       o.masters = SM.shift.atWork(S, sh).slice();
@@ -80,8 +86,8 @@
       at(close); SM.shift.close(S);
       if (wd % 7 === 0 && S.drawer.balance > 8000) { at(close + 60e3); SM.shift.collect(S, Math.round(S.drawer.balance - 5000), S.settings.pin, "демо"); }
       if (wd % 12 === 0) restock(d + 8 * 36e5, 0.55);
-      // Грузики: коробку выдают в работу целиком, когда предыдущая закончилась
-      [["w1", 5], ["w2", 9]].forEach(([id, every]) => { if (wd % every === 0 && SM.warehouse.item(S, id).qty >= 1) { at(open + 10 * 60e3); SM.warehouse.writeOff(S, id, 1, "Выдана в работу · Мастер 1"); } });
+      // Грузики: коробку берут в работу целиком, когда предыдущая закончилась
+      [["w1", 5], ["w2", 9]].forEach(([id, every]) => { if (wd % every === 0 && SM.warehouse.item(S, id).qty >= 1) { at(open + 10 * 60e3); SM.warehouse.writeOff(S, id, 1, "Взята в работу · Мастер 1"); } });
       if (wd % 9 === 0) { at(d + 13 * 36e5); SM.payroll.addAdjustment(S, { empId: pick(["e1", "e2", "e3"]), type: "advance", amount: pick([2000, 3000, 5000]), note: "демо" }); }
     }
     // Премия / штраф
@@ -125,9 +131,15 @@
     const o2 = SM.orders.create(S, { plate: "М456ОР750" }, "Мастер 2").order;
     SM.orders.addItem(S, o2, SM.prices.find(S.prices, "f:Ремонт жгутом", "passenger", "R16"), 1, {}, "Мастер 2");
     SM.orders.setStatus(S, o2, "work", "Мастер 2"); at(now - 5 * 60e3); SM.orders.setStatus(S, o2, "ready", "Мастер 2");
-    // Очередь
+    // Живая очередь (талоны с планшета, нумерация сегодня с 1)
     S.queue.items.forEach((q) => (q.status = "done"));
-    at(now - 15 * 60e3); SM.queueAdd(S); at(now - 6 * 60e3); SM.queueAdd(S);
+    at(now - 15 * 60e3); SM.live.take(S, plate()); at(now - 6 * 60e3); SM.live.take(S, plate());
+    // Покраска дисков: два наряда (один ещё красится, один готов к выдаче) — оплата при выдаче
+    at(today - 6 * 864e5 + 12 * 36e5);
+    const pn1 = SM.paint.create(S, { plate: S.clients[4].plate, phone: S.clients[4].phone, name: S.clients[4].name, car: S.clients[4].car, radius: "R17", disks: 4, color: "чёрный матовый", caps: true, tires: true, tireBrand: "Nokian Hakkapeliitta", straighten: { qty: 1, sum: 1500 }, paintPrice: 16000, services: [{ key: "r:Переобувка 4 колеса", qty: 1, typeKey: "passenger", radius: "R17" }], comment: "демо" }, "Мастер 1").order;
+    at(today - 1 * 864e5 + 17 * 36e5); SM.paint.setReady(S, pn1, "Мастер 1");
+    at(today - 2 * 864e5 + 11 * 36e5);
+    SM.paint.create(S, { plate: S.clients[10].plate, phone: S.clients[10].phone, name: S.clients[10].name, radius: "R16", disks: 4, color: "серебро", caps: false, tires: false, straighten: null, paintPrice: 14000, services: [], comment: "демо" }, "Мастер 2");
     // Записи
     at(now - 864e5);
     const tk = SM.dayKey(now), tm = SM.dayKey(now + 864e5);
@@ -138,6 +150,8 @@
     mk(tm, "10:00", "tire", S.clients[3], "");
     mk(tm, "12:00", "repair", S.clients[8], "прокол");
     mk(tm, "15:00", "storage", S.clients[12], "сдать летние");
+    // Напоминания, которые уже должны были уйти к этому моменту (имитация)
+    S.bookings.map((b) => SM.reminders.visitTs(b)).flatMap((v) => [v - 24 * 36e5, v - 2 * 36e5]).filter((t) => t <= now && t > now - 864e5).sort((a, b) => a - b).forEach((t) => { at(t); SM.reminders.run(S, t); });
     SM.clock.fixed = null;
     S.ui.operator = "e1";
     return S;

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Живая очередь — Шинамашина (демо)</title><link rel="icon" href="icon.svg"><link rel="manifest" href="manifest-queue.webmanifest"><meta name="theme-color" content="#ff6b00">
+<link rel="stylesheet" href="css/app.css">
+<style>
+body{background:#111827;color:#fff}.qwrap{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:18px;text-align:center}
+.qwrap img{height:64px;background:#fff;border-radius:14px;padding:6px 10px}.qh{font-size:2.2rem;font-weight:900}.qs{font-size:1.2rem;color:#cbd5e1;max-width:760px}
+.qbig{min-height:120px;min-width:min(560px,92vw);border:0;border-radius:24px;background:var(--accent);color:#111;font-size:2rem;font-weight:900;box-shadow:0 10px 30px rgba(255,107,0,.35)}
+.ticket{background:#fff;color:#111;border-radius:24px;padding:22px 30px;min-width:min(520px,92vw)}.ticket .no{font-size:6rem;font-weight:900;line-height:1}.ticket .row{justify-content:center}
+.qinfo{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}.qinfo div{background:#f1f5f9;border-radius:14px;padding:10px}.qinfo b{display:block;font-size:1.5rem}
+.qfoot{position:fixed;bottom:6px;left:0;right:0;font-size:.75rem;color:#64748b;text-align:center}.qfoot a{color:#94a3b8}
+.qwarn{background:#fef3c7;color:#92400e;border-radius:14px;padding:10px 14px;font-weight:700;max-width:620px}
+.modal{color:var(--text)}
+</style></head>
+<body><div class="qwrap" id="root"></div><div class="qfoot">Демо-версия, данные вымышлены · <a href="index.html">касса</a> · <button id="fs" style="background:none;border:0;color:#94a3b8;text-decoration:underline">⛶ полный экран</button></div><div id="toast"></div><button id="kbd-done" type="button">Готово ⌨</button>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/queue.js"></script><script src="js/printer.js"></script><script src="js/products.js"></script><script src="js/paint.js"></script><script src="js/reminders.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script><script src="js/consent.js"></script>
+<script src="ui/base.js"></script>
+<script>
+/* Планшет живой очереди для клиентов (сезон): ввести госномер → талон. Нумерация каждый день с №1. */
+(function(){
+  var root = document.getElementById("root"), back = null, esc = SM.esc;
+  function home(){
+    clearTimeout(back); var S = SM.reload(), L = SM.live, P = L.posts(S), w = L.waiting(S);
+    if (!S.settings.seasonMode) { root.innerHTML = '<img src="logo-header.png" alt="Шинамашина"><div class="qh">Живая очередь сейчас не работает</div><div class="qs">Подойдите, пожалуйста, к администратору — примем вас без талона.</div>'; return; }
+    var next = w.length ? L.waitMin(S, (w[w.length-1].no) + 1) : 0;
+    root.innerHTML = '<img src="logo-header.png" alt="Шинамашина"><div class="qh">Живая очередь</div><div class="qs">Введите госномер и получите талон. Вас вызовут на пост ' + P.livePosts.join(", ") + '. Посты ' + (P.bookingPosts.join(" и ") || "—") + ' — для записавшихся онлайн.</div>' +
+      '<button class="qbig" id="take">🎫 Получить талон</button><div class="qs">Сейчас в очереди: <b>' + w.length + '</b> · ожидание ' + L.waitLabel(next) + '</div>';
+    document.getElementById("take").onclick = function(){ SM.ui.plateKeyboard({ title: "Ваш госномер", onDone: take }); };
+  }
+  function take(plate){
+    var S = SM.reload(), r = SM.live.take(S, plate);
+    if (!r.ok) { SM.ui.toast(r.msg, true); return; }
+    SM.save();
+    var pr = SM.printer.print(S, SM.printer.ticketLines(S, r.ticket, r.wait));
+    root.innerHTML = '<div class="ticket" id="ticket"><div style="font-weight:800;color:#64748b">' + (r.existed ? "Вы уже в очереди — ваш талон" : "Ваш талон") + '</div><div class="no">№' + r.ticket.no + '</div><div class="row" style="margin-top:6px">' + SM.ui.plateHtml(r.ticket.plate) + '</div>' +
+      '<div class="qinfo"><div>Перед вами<b>' + r.ahead + '</b></div><div>Ожидание<b>' + SM.live.waitLabel(r.wait).replace("≈ ", "≈") + '</b></div><div>Пост<b>' + r.post.join(", ") + '</b></div></div></div>' +
+      (pr.ok ? '<div class="qs">🖨 Талон печатается — заберите его у принтера.</div>' : '<div class="qwarn">' + (pr.reason === "browser" ? "Демо в браузере: бумажный талон печатается только в приложении (APK) на сетевом принтере. Запомните или сфотографируйте номер." : "Принтер недоступен: " + esc(pr.msg) + ". Запомните номер.") + '</div>') +
+      '<div class="qs">Номер вызовут на кассе. Ожидание примерное.</div><button class="btn primary" style="min-width:280px;min-height:72px;font-size:1.3rem" id="ok">Готово</button>';
+    document.getElementById("ok").onclick = home; back = setTimeout(home, 25000);
+  }
+  document.getElementById("fs").onclick = function(){ SM.ui.act.fullscreen(); };
+  SM.onSave(function(ext){ if (ext && !document.getElementById("ticket") && !document.querySelector(".modal-bg")) home(); });
+  home();
+})();
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function(){});
+</script></body></html>

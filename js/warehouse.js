@@ -4,8 +4,8 @@
   const W = (SM.warehouse = {});
   W.item = (S, id) => S.warehouse.items.find((i) => i.id === id) || null;
   W.low = (S) => S.warehouse.items.filter((i) => i.qty < i.min);
-  W.MOVE_RU = { in: "Приход", auto: "Автосписание", write: "Списание", inv: "Инвентаризация", box: "Выдана коробка" };
-  /** Позиции «коробками» (грузики): без норм и автосписания, только целые коробки — приход, выдача в работу, инвентаризация. */
+  W.MOVE_RU = { in: "Приход", auto: "Автосписание", write: "Списание", inv: "Инвентаризация", box: "Взята коробка" };
+  /** Позиции «коробками» (грузики): без норм и автосписания, только целые коробки — приход, «взять коробку» в работу, инвентаризация. */
   W.isBox = (it) => !!(it && it.box);
   const whole = (q) => Math.abs(q - Math.round(q)) < 1e-9;
   function move(S, it, qty, type, ref, note, ts) {

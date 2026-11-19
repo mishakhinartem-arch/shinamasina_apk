@@ -284,3 +284,204 @@ test("Документы: договор хранения и согласие н
   const f = SM.docFill(D.contract, { "ФИО клиента": "Иван <демо>", "Номер договора": "Х-0001" });
   assert.ok(f.includes("Иван &lt;демо&gt;") && f.includes("Х-0001") && !/data-f=/.test(f));
 });
+
+/* ===================== Пачка правок 18–19.11 ===================== */
+test("п.1 Коммерческий (R14C/R15C/R16C) и Газель (только R16); надбавка +20% RunFlat на пакеты работает и для них", () => {
+  const S = fresh(); const P = SM.prices;
+  assert.equal(P.radiusPrice(S.prices, "commercial", "Переобувка 4 колеса", "R14"), 3900); // колонка R14C
+  assert.equal(P.radiusPrice(S.prices, "commercial", "Балансировка", "R16"), 305);         // R16C
+  assert.equal(P.radiusPrice(S.prices, "gazel", "Переобувка 4 колеса", "R16"), 5500);      // Газель
+  assert.equal(P.hasRadius(S.prices, "gazel", "R15"), false);
+  assert.equal(P.hasRadius(S.prices, "commercial", "R17"), false);
+  assert.equal(P.hasRadius(S.prices, "commercial", "R13"), false);
+  assert.equal(P.hasRadius(S.prices, "passenger", "R16"), true);
+  assert.equal(P.typeLabel("commercial"), "Коммерческий"); assert.equal(P.typeLabel("gazel"), "Газель");
+  const o = { items: [], runflat: true, history: [] };
+  SM.orders.addItem(S, o, P.find(S.prices, "r:Переобувка 4 колеса", "gazel", "R16"), 1, { radius: "R16", typeKey: "gazel" }, "т");
+  SM.orders.addItem(S, o, P.find(S.prices, "r:Балансировка", "commercial", "R15"), 4, { radius: "R15", typeKey: "commercial" }, "т");
+  assert.equal(o.items[0].typeKey, "gazel"); assert.equal(o.items[1].price, 270);
+  const t = SM.cart.totals(o, S.settings);
+  assert.equal(t.surcharge, 1100); // 20% от 5500, балансировка без надбавки
+  assert.equal(t.total, 5500 + 1080 + 1100);
+});
+test("п.2 Живая очередь: талон по госномеру с планшета, повтор номера — тот же талон, нумерация каждый день с №1, не в сезон — нет", () => {
+  const S = fresh(); const L = SM.live;
+  const a = L.take(S, "а123вс50"); assert.equal(a.ok, true); assert.equal(a.ticket.no, 1); assert.equal(a.ticket.plate, "А123ВС50");
+  const b = L.take(S, "В777ВВ77"); assert.equal(b.ticket.no, 2); assert.equal(b.ahead, 1);
+  const a2 = L.take(S, "А123ВС50"); assert.equal(a2.existed, true); assert.equal(a2.ticket.no, 1);
+  assert.equal(L.take(S, "").ok, false);
+  SM.clock.fixed = T0 + 24 * H; // следующий день
+  const c = L.take(S, "Е555КХ77"); assert.equal(c.ticket.no, 1); assert.equal(c.ticket.day, "2026-11-19");
+  assert.equal(L.waiting(S).length, 1); // вчерашние талоны в сегодняшней очереди не показываются
+  assert.equal(SM.queueAdd(S, "касса").no, 2);
+  S.settings.seasonMode = false; const off = L.take(S, "Т456ТТ50"); assert.equal(off.ok, false); assert.match(off.msg, /сезон/);
+});
+test("п.3 Три поста: запись на 2 поста, живая очередь на 3-й, ожидание примерное", () => {
+  const S = fresh(); const L = SM.live;
+  assert.deepEqual(L.posts(S), { total: 3, booking: 2, live: 1, bookingPosts: [1, 2], livePosts: [3] });
+  assert.equal(SM.booking.capacity(S), 2);
+  S.settings.slotCapacity = 3; S.settings.seasonMode = false; assert.equal(SM.booking.capacity(S), 3); assert.equal(L.posts(S).live, 3); S.settings.seasonMode = true;
+  // слоты записи: 2 машины на слот, третья запись в тот же слот не проходит
+  const day = SM.dayKey(T0 + 24 * H);
+  const mk = (n) => SM.booking.create(S, { consent: true, name: "К" + n, phone: "7900111000" + n, direction: "tire", date: day, time: "10:00", plate: "" });
+  assert.equal(mk(1).ok, true); assert.equal(mk(2).ok, true); assert.equal(mk(3).ok, false);
+  // ожидание: 40 мин на машину, 1 пост очереди
+  ["А111АА77", "В222ВВ77", "Е333ЕЕ77"].forEach((p) => L.take(S, p));
+  assert.equal(L.waitMin(S, 1), 0); assert.equal(L.waitMin(S, 3), 80);
+  const n = SM.queueNext(S); assert.equal(n.no, 1); assert.equal(n.post, 3); assert.equal(n.status, "called");
+  assert.equal(L.waitMin(S, 3), 60); // 1 впереди + машина на посту ×½ → (1 + 0,5) × 40 = 60
+  assert.equal(L.waitLabel(80), "≈ 1 ч 20 мин"); assert.equal(L.waitLabel(0), "сразу, подъезжайте");
+  // заказ по талону закрывает талон при оплате
+  SM.shift.open(S, ["a"], 0);
+  const o = SM.orders.create(S, { plate: "А111АА77", queueNo: 1 }, "т").order;
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Подкачка", "passenger", "R16"), 1, {}, "т");
+  SM.orders.pay(S, o, "card", "т"); assert.equal(L.find(S, 1).status, "done");
+});
+test("п.4 Сетевой принтер: проверка IP, CP866, ESC/POS; в браузере/Node честный отказ «только APK»", () => {
+  const PR = SM.printer;
+  assert.equal(PR.validIp("192.168.1.50"), true); assert.equal(PR.validIp("192.168.1.256"), false); assert.equal(PR.validIp("принтер"), false); assert.equal(PR.validIp(""), false);
+  assert.deepEqual(PR.encode866("Талон №5"), [0x92, 0xa0, 0xab, 0xae, 0xad, 0x20, 0xfc, 0x35]);
+  assert.deepEqual(PR.encode866("Ёё я"), [0xf0, 0xf1, 0x20, 0xef]);
+  const b = PR.escpos([{ text: "A", big: true, align: "center" }]);
+  assert.deepEqual(b.slice(0, 5), [0x1b, 0x40, 0x1b, 0x74, 17]);
+  assert.deepEqual(b.slice(-4), [0x1d, 0x56, 0x42, 0]);
+  assert.ok(b.join(",").indexOf([0x1d, 0x21, 0x11].join(",")) > 0);
+  const S = fresh();
+  assert.equal(PR.print(S, ["x"]).reason, "noip");
+  S.settings.printerIp = "10.0.0.999"; assert.equal(PR.print(S, ["x"]).reason, "badip");
+  S.settings.printerIp = "192.168.1.50"; const r = PR.print(S, PR.testLines(S)); assert.equal(r.ok, false); assert.equal(r.reason, "browser"); assert.match(r.msg, /APK/);
+  const t = SM.queueAdd(S, "планшет", "А123ВС50"); const lines = PR.ticketLines(S, t, 40);
+  assert.ok(lines.some((l) => l.text === "Талон №1" && l.big));
+  assert.equal(PR.toBase64([0x1b, 0x40]), "G0A=");
+});
+test("п.9 Покраска: наряд без оплаты → «В покраске», правка и услуги из прайса, выдача одним чеком", () => {
+  const S = fresh(); const PN = SM.paint;
+  const base = { plate: "А123ВС50", phone: "79000000001", name: "Иван", radius: "R17", disks: 4, color: "чёрный", caps: true, tires: true, tireBrand: "Nokian", paintPrice: 16000 };
+  assert.equal(PN.create(S, Object.assign({}, base, { tireBrand: "" }), "т").ok, false); // с резиной — нужна марка
+  assert.equal(PN.create(S, Object.assign({}, base, { straighten: { qty: 5, sum: 1000 } }), "т").ok, false); // правка > дисков
+  assert.equal(PN.create(S, Object.assign({}, base, { color: "" }), "т").ok, false);
+  assert.equal(PN.create(S, Object.assign({}, base, { paintPrice: 0 }), "т").ok, false);
+  assert.equal(PN.create(S, Object.assign({}, base, { plate: "", phone: "" }), "т").ok, false);
+  const r = PN.create(S, Object.assign({}, base, { straighten: { qty: 2, sum: 3000 }, services: [{ key: "r:Снятие и установка 4-х колёс", qty: 1, typeKey: "passenger", radius: "R17" }, { key: "r:Балансировка", qty: 4, typeKey: "passenger", radius: "R17" }] }), "т");
+  assert.equal(r.ok, true); const p = r.order;
+  assert.equal(p.status, "paint"); assert.equal(S.receipts.length, 0); // при приёме денег не берём
+  assert.equal(p.caps, true); assert.equal(p.tireBrand, "Nokian"); assert.deepEqual(p.straighten, { qty: 2, sum: 3000 });
+  const exp = 16000 + 3000 + 1100 + 4 * 350;
+  assert.equal(PN.totals(S, p).total, exp); assert.equal(PN.due(S), exp); assert.equal(PN.active(S).length, 1);
+  assert.equal(PN.addService(S, p, { key: "f:Утилизация б/у автошины", qty: 4 }, "т").ok, true);
+  assert.equal(PN.removeItem(S, p, p.items[0].id, "т").ok, false); // покраску из наряда не убрать
+  assert.equal(PN.pay(S, p, "cash", "т").ok, false); // смена не открыта
+  SM.shift.open(S, ["a"], 0); PN.setReady(S, p, "т"); assert.equal(p.status, "ready");
+  const pay = PN.pay(S, p, "cash", "т");
+  assert.equal(pay.ok, true); assert.equal(S.receipts.length, 1); // один чек на всё
+  assert.equal(pay.receipt.total, exp + 200); assert.equal(pay.receipt.items.length, 5); assert.equal(pay.receipt.paintId, p.id);
+  assert.equal(S.drawer.balance, exp + 200); assert.equal(p.status, "done"); assert.equal(PN.active(S).length, 0);
+  assert.equal(PN.pay(S, p, "cash", "т").ok, false); // повторно не оплатить
+  assert.equal(SM.shift.revenue(S, SM.shift.current(S).id).total, exp + 200);
+});
+test("п.10 Напоминания: за 24 ч и за 2 ч, только с согласием и каналом, без дублей, журнал (имитация)", () => {
+  const S = fresh(); const RM = SM.reminders;
+  const c1 = SM.addClient(S, { name: "Согласен", phone: "79000000011", plate: "А111АА77" }).client; RM.setClient(S, c1, "telegram", true);
+  const c2 = SM.addClient(S, { name: "Без согласия", phone: "79000000012", plate: "В222ВВ77" }).client; RM.setClient(S, c2, "sms", false);
+  assert.equal(RM.setClient(S, c2, "pigeon", true).ok, false);
+  const day = SM.dayKey(T0 + 48 * H); // 20.11 — визит в 12:00, запись сделана 18.11 09:00
+  const b1 = SM.booking.create(S, { consent: true, name: "Согласен", phone: "79000000011", plate: "А111АА77", direction: "tire", date: day, time: "12:00" }).booking;
+  const b2 = SM.booking.create(S, { consent: true, name: "Без согласия", phone: "79000000012", plate: "В222ВВ77", direction: "tire", date: day, time: "12:00" }).booking;
+  const visit = RM.visitTs(b1);
+  assert.equal(RM.run(S, visit - 25 * H).length, 0); // рано
+  let n = RM.run(S, visit - 24 * H);
+  assert.equal(n.length, 2);
+  const e1 = n.find((e) => e.bookingId === b1.id), e2 = n.find((e) => e.bookingId === b2.id);
+  assert.equal(e1.status, "sent"); assert.equal(e1.channel, "telegram"); assert.equal(e1.kind, "24h"); assert.equal(e1.demo, true); assert.match(e1.text, /12:00/);
+  assert.equal(e2.status, "skip"); assert.match(e2.reason, /согласи/);
+  assert.equal(RM.run(S, visit - 23 * H).length, 0); // без дублей
+  n = RM.run(S, visit - 2 * H + 60e3); assert.equal(n.filter((e) => e.status === "sent").length, 1); assert.equal(n[0].kind, "2h");
+  assert.equal(RM.run(S, visit + H).length, 0); // после визита — ничего
+  assert.equal(S.reminders.log.length, 4);
+  // запись сделана менее чем за 24 ч → «за 24 ч» не отправляется, «за 2 ч» — да
+  SM.clock.fixed = visit - 5 * H;
+  const b3 = SM.booking.create(S, { consent: true, name: "Поздно", phone: "79000000011", plate: "А111АА77", direction: "repair", date: day, time: "17:00", remind: { channel: "max", consent: true } }).booking;
+  assert.equal(SM.client(S, b3.clientId).notify.channel, "max"); // канал из онлайн-записи
+  n = RM.run(S, visit - 4 * H); const late = n.find((e) => e.bookingId === b3.id); assert.equal(late.status, "skip"); assert.match(late.reason, /позже/);
+  n = RM.run(S, RM.visitTs(b3) - 2 * H); assert.equal(n.find((e) => e.bookingId === b3.id).status, "sent");
+  // отменённая запись и выключенные напоминания
+  b3.status = "cancel"; S.settings.remindersOn = false; assert.equal(RM.run(S, RM.visitTs(b3) - 60e3).length, 0);
+  assert.equal(RM.plan(S, b1).every((x) => x.state === "sent"), true);
+});
+test("п.11 Владелец: свои услуги (фикс / по радиусу и типу / вводится), правка цен, скрытие; встроенные не переименовываются", () => {
+  const S = fresh(); const P = SM.prices;
+  assert.equal(P.addCustom(S.prices, { name: "", group: "small", mode: "fixed", price: 100 }).ok, false);
+  assert.equal(P.addCustom(S.prices, { name: "Балансировка", group: "tire", mode: "fixed", price: 100 }).ok, false); // уже есть
+  assert.equal(P.addCustom(S.prices, { name: "Мойка колёс", group: "small", mode: "fixed", price: 0 }).ok, false);
+  assert.equal(P.addCustom(S.prices, { name: "Мойка колёс", group: "small", mode: "radial", grid: {} }).ok, false);
+  const f = P.addCustom(S.prices, { name: "Мойка колёс", group: "small", mode: "fixed", price: 400 }); assert.equal(f.ok, true);
+  const rd = P.addCustom(S.prices, { name: "Шиповка", group: "tire", mode: "radial", grid: { passenger: { R15: 900, R16: "1000", R17: "" }, gazel: { R16: 1500 } } }); assert.equal(rd.ok, true);
+  const mn = P.addCustom(S.prices, { name: "Сварка диска", group: "repair", mode: "manual", fromPrice: 1500 }); assert.equal(mn.ok, true);
+  let cat = P.catalog(S.prices, "passenger", "R16");
+  assert.equal(cat.find((t) => t.key === f.key).price, 400);
+  assert.equal(cat.find((t) => t.key === rd.key).price, 1000); assert.equal(P.find(S.prices, rd.key, "passenger", "R17").price, null);
+  assert.equal(P.find(S.prices, rd.key, "gazel", "R16").price, 1500);
+  assert.equal(cat.find((t) => t.key === mn.key).manual, true);
+  assert.equal(P.updateCustom(S.prices, f.service.id, { price: 450, name: "Мойка колёс (4 шт)" }).ok, true);
+  assert.equal(P.find(S.prices, f.key, "passenger", "R16").name, "Мойка колёс (4 шт)");
+  // правка встроенных цен
+  assert.equal(P.setRadialPrice(S.prices, "Балансировка", "passenger", "R16", 345).ok, true); assert.equal(P.radiusPrice(S.prices, "passenger", "Балансировка", "R16"), 345);
+  assert.equal(P.setRadialPrice(S.prices, "Балансировка", "commercial", "R14", 260).ok, true); assert.equal(S.prices.commercial.services["Балансировка"][0], 260);
+  assert.equal(P.setFlatPrice(S.prices, "Подкачка", 120).ok, true); assert.equal(P.find(S.prices, "f:Подкачка", "passenger", "R16").price, 120);
+  assert.equal(P.setFlatPrice(S.prices, "Подкачка", 0).ok, false);
+  // скрытие: не видно на кассе и в «Частых», в полном списке — есть
+  P.setHidden(S.prices, "f:Подкачка", true); P.setHidden(S.prices, "r:Монтаж", true);
+  cat = P.catalog(S.prices, "passenger", "R16");
+  assert.equal(cat.some((t) => t.key === "f:Подкачка" || t.key === "r:Монтаж"), false);
+  assert.equal(P.catalog(S.prices, "passenger", "R16", { all: true }).some((t) => t.key === "r:Монтаж"), true);
+  assert.equal(SM.prices.frequent(S, 9).map((k) => cat.find((t) => t.key === k)).filter(Boolean).some((t) => t.key === "r:Монтаж"), false);
+  assert.equal(P.setHidden(S.prices, "gift", true).ok, false);
+  P.setHidden(S.prices, "f:Подкачка", false); assert.ok(P.find(S.prices, "f:Подкачка", "passenger", "R16"));
+  // своя услуга в чеке
+  SM.shift.open(S, ["a"], 0);
+  const o = SM.orders.create(S, { plate: "А123ВС50" }, "т").order;
+  assert.equal(SM.orders.addItem(S, o, P.find(S.prices, rd.key, "passenger", "R15"), 4, { radius: "R15", typeKey: "passenger" }, "т").ok, true);
+  assert.equal(SM.orders.pay(S, o, "card", "т").receipt.total, 3600);
+});
+test("п.11 Товары: цена/закупка/остаток, в чек без скидок и не в % мастеров, списание со склада, закупка в прибыли", () => {
+  const S = fresh(); const G = SM.products;
+  assert.equal(G.add(S, { name: "", price: 100, qty: 1 }).ok, false);
+  assert.equal(G.add(S, { name: "Щётки", price: 0, qty: 1 }).ok, false);
+  assert.equal(G.add(S, { name: "Щётки", price: 900, cost: 450, qty: 1.5 }).ok, false);
+  const p = G.add(S, { name: "Щётки", price: 900, cost: 450, qty: 3, min: 2 }).product;
+  assert.equal(G.add(S, { name: "щётки", price: 900, qty: 1 }).ok, false); // дубль
+  SM.shift.open(S, ["a"], 0);
+  const o = SM.orders.create(S, { plate: "А123ВС50" }, "т").order; o.loyalty = true;
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "r:Балансировка", "passenger", "R16"), 4, { radius: "R16", typeKey: "passenger" }, "т");
+  assert.equal(G.addToOrder(S, o, p.id, 2, "т").ok, true);
+  assert.equal(G.addToOrder(S, o, p.id, 2, "т").ok, false); // на складе 3, в заказе уже 2
+  const it = o.items.find((i) => i.productId === p.id);
+  assert.equal(SM.orders.setQty(S, o, it.id, 4, "т").ok, false);
+  assert.equal(SM.orders.setPrice(S, o, it.id, 1, "т").ok, false); // цену товара на кассе не менять
+  assert.equal(SM.orders.setDiscount(S, o, { type: "rub", value: 100 }, "т").ok, true);
+  const t = SM.cart.totals(o, S.settings);
+  assert.equal(t.goods, 1800); assert.equal(t.discountBase, 1320); assert.equal(t.discount, 132 + 100); // скидки только от услуг
+  assert.equal(t.total, 1320 - 232 + 1800); assert.equal(t.count, 4);
+  const r = SM.orders.pay(S, o, "card", "т").receipt;
+  assert.equal(G.get(S, p.id).qty, 1); assert.equal(r.goodsCost, 900);
+  assert.equal(G.low(S).length, 1); // ниже минимума → предупреждение владельцу
+  assert.equal(SM.cart.serviceAmount(r), 1320 - 232); // в базу % мастеров — без товаров
+  assert.equal(SM.payroll.ledgerFor(S, r.shiftId)[0].delta, 1088);
+  const rep = SM.reports.month(S, "2026-11"); assert.equal(rep.goods, 1800); assert.equal(rep.goodsCost, 900); assert.equal(rep.services, 1088);
+  // скрытый — не продаётся; правка остатка владельцем пишется в движения
+  G.setHidden(S, p.id, true); const o2 = SM.orders.create(S, { plate: "В777ВВ77" }, "т").order; assert.equal(G.addToOrder(S, o2, p.id, 1, "т").ok, false);
+  assert.equal(G.update(S, p.id, { qty: 10 }).ok, true); assert.equal(S.productMoves[S.productMoves.length - 1].qty, 9);
+  // остатка не хватило к моменту оплаты — чек не пробивается
+  G.setHidden(S, p.id, false); G.addToOrder(S, o2, p.id, 2, "т"); G.update(S, p.id, { qty: 1 });
+  assert.equal(SM.orders.pay(S, o2, "cash", "т").ok, false);
+});
+test("Демо-данные v3: товары, покраска, живая очередь, напоминания создаются; RunFlat-надбавка в seed не сломана", () => {
+  const S = SM.seed({ now: new Date(2026, 10, 19, 14, 0).getTime() });
+  assert.equal(S.version, 3);
+  assert.ok(S.products.length >= 5); assert.equal(SM.paint.active(S).length, 2);
+  assert.equal(SM.live.waiting(S).length, 2); assert.equal(SM.live.waiting(S)[0].no, 1);
+  assert.ok(S.clients.some((c) => c.notify && c.notify.consent));
+  assert.ok(S.receipts.some((r) => r.runflat && r.totals.surcharge > 0));
+  assert.ok(S.receipts.some((r) => r.totals.goods > 0));
+  SM.clock.fixed = null;
+});
