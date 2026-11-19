@@ -27,7 +27,7 @@
     if (t.type === "checkbox") v = t.checked;
     else if (t.type === "time") v = t.value;
     else if (t.dataset.str != null) { v = t.value.trim(); if (k === "printerIp" && v && !SM.printer.validIp(v)) { U.toast("Неверный IP. Пример: 192.168.1.50", true); return; } }
-    else { v = Number(t.value); if (!(v >= 0)) return U.toast("Неверное значение", true); if (k === "posts" && !(v >= 1 && v <= 6)) return U.toast("Постов: от 1 до 6", true); if (k === "bookingPosts" && v >= (S.settings.posts || 3)) return U.toast("Под запись — меньше, чем постов всего (нужен пост для живой очереди)", true); if (k === "printerPort" && !SM.printer.validPort(v)) return U.toast("Порт: 1–65535", true); if (/^dur/.test(k) && !(v >= 5 && v <= 600)) { t.value = S.settings[k]; return U.toast("Время: от 5 до 600 мин", true); } }
+    else { v = Number(t.value); if (!(v >= 0)) return U.toast("Неверное значение", true); if ((k === "runflatPct" || k === "lowProfilePct") && !(v <= 100)) { t.value = S.settings[k]; return U.toast("Надбавка: от 0 до 100 %", true); } if (k === "posts" && !(v >= 1 && v <= 6)) return U.toast("Постов: от 1 до 6", true); if (k === "bookingPosts" && v >= (S.settings.posts || 3)) return U.toast("Под запись — меньше, чем постов всего (нужен пост для живой очереди)", true); if (k === "printerPort" && !SM.printer.validPort(v)) return U.toast("Порт: 1–65535", true); if (/^dur/.test(k) && !(v >= 5 && v <= 600)) { t.value = S.settings[k]; return U.toast("Время: от 5 до 600 мин", true); } }
     S.settings[k] = v; SM.save(); U.toast("Сохранено");
     if (["seasonMode", "posts", "bookingPosts"].indexOf(k) >= 0 && U.view === "admin") U.render();
   });

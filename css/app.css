@@ -122,6 +122,11 @@ body.typing #kbd-done{display:block}
 .toggle{flex:1.2;min-height:56px;border:3px dashed #b9c4d1;border-radius:13px;background:#fff;display:flex;align-items:center;gap:10px;padding:0 12px;font-weight:700;font-size:.95rem;color:var(--muted);text-align:left;line-height:1.15}
 .toggle b{color:var(--text)}
 .toggle.on{border-style:solid;border-color:var(--accent);background:var(--accent-soft);color:#9a3412}
+.tgl2{flex:1.2;display:flex;flex-direction:column;gap:4px}
+.tgl2 .toggle{flex:1;min-height:30px;border-width:2px;padding:0 8px;gap:6px;font-size:.8rem}
+.tgl2 .sw{width:30px;height:16px;border-radius:8px}
+.tgl2 .sw::after{width:12px;height:12px;left:2px;top:2px}
+.tgl2 .on .sw::after,.tgl2 .toggle.on .sw::after{left:16px}
 .sw{width:46px;height:26px;border-radius:13px;background:#cfd8e3;position:relative;flex:none;transition:.15s}
 .sw::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:.15s}
 .on .sw{background:var(--accent)}
@@ -230,7 +235,7 @@ body.typing #kbd-done{display:block}
   .tiles{overflow:visible}
   .order,.split,.split.l{grid-template-columns:1fr}
   .radii{grid-template-columns:repeat(5,1fr)}
-  .types{flex-wrap:wrap}.toggle{flex-basis:100%}
+  .types{flex-wrap:wrap}.toggle,.tgl2{flex-basis:100%}
   .tabsrow{flex-wrap:wrap}.search{flex-basis:100%}
 }
 @media (max-width:640px){
@@ -285,7 +290,7 @@ body.fit .banner .btn{min-height:40px}
   .types{flex-wrap:nowrap}
   .tb{white-space:normal;line-height:1.05;font-size:.85rem;padding:0 4px}
   .tb.active::before{content:""}
-  .toggle{flex:0 0 100%}
+  .toggle,.tgl2{flex:0 0 100%}
   .types{flex-wrap:wrap}
   .types .tb{flex:1 1 30%}
   .rb{min-height:52px;font-size:1.1rem}
@@ -335,6 +340,7 @@ div.kb-order{font-size:.92rem}
 .accept-btn .plate{align-self:center}
 .types.n5 .tb{font-size:.88rem;padding:0 4px;white-space:normal;line-height:1.05}
 .types.n5 .toggle{flex:1;font-size:.82rem;padding:0 8px;gap:6px}
+.types.n5 .tgl2{flex:1.9}.types.n5 .tgl2 .toggle{font-size:.76rem;padding:0 6px;gap:5px;min-height:30px;white-space:nowrap}
 .types.n5 .toggle .sw{width:40px}
 .types.n4 .tb{font-size:.95rem;padding:0 6px}
 .tabsrow .tab{padding:0 10px;font-size:.93rem}

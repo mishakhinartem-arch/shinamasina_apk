@@ -480,7 +480,7 @@ test("п.11 Товары: цена/закупка/остаток, в чек бе
 });
 test("Демо-данные v3: товары, покраска, живая очередь, напоминания создаются; RunFlat-надбавка в seed не сломана", () => {
   const S = SM.seed({ now: new Date(2026, 10, 19, 14, 0).getTime() });
-  assert.equal(S.version, 5);
+  assert.equal(S.version, 6);
   assert.ok(S.products.length >= 5); assert.equal(SM.paint.active(S).length, 2);
   assert.equal(SM.live.waiting(S).length, 2); assert.equal(SM.live.waiting(S)[0].no, 1);
   assert.ok(S.clients.some((c) => c.notify && c.notify.consent));
@@ -627,7 +627,7 @@ test("19.11 v5 Склад ремонта: все позиции «Ремонт»
   SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Заплатка R-20", "passenger", "R16"), 2, {}, "т"); SM.orders.pay(S, o, "card", "т");
   assert.equal(p20.qty, -2);
 });
-test("19.11 v5 Миграция v4 → v5 при загрузке: склад ремонта добавляется, остатки и цены не меняются, версия 5", () => {
+test("19.11 v5 Миграция v4 → v5 при загрузке: склад ремонта добавляется, остатки и цены не меняются (дальше цепочка до текущей версии)", () => {
   const mem = {}; globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => (mem[k] = String(v)), removeItem: (k) => delete mem[k] };
   try {
     SM.clock.fixed = T0; const st = SM.seed({ now: T0 });
@@ -636,11 +636,11 @@ test("19.11 v5 Миграция v4 → v5 при загрузке: склад р
     const before = st.warehouse.items.map((i) => [i.id, i.qty, i.cost].join("|"));
     mem[SM.STORE_KEY] = JSON.stringify(st);
     const S = SM.reload();
-    assert.equal(S.version, 5); assert.equal(S.version, SM.STATE_VERSION);
+    assert.equal(S.version, 6); assert.equal(S.version, SM.STATE_VERSION); // v4 проходит всю цепочку 4 → 5 → 6
     assert.ok(SM.warehouse.findItem(S, "Ножка грибка №9")); assert.ok(SM.warehouse.findItem(S, "Заплатка R-25"));
     assert.deepEqual(S.warehouse.items.slice(0, before.length).map((i) => [i.id, i.qty, i.cost].join("|")), before);
     assert.ok(S.warehouse.suppliers.length >= 2); // справочник собран из прошлых накладных
-    assert.equal(JSON.parse(mem[SM.STORE_KEY]).version, 5);
+    assert.equal(JSON.parse(mem[SM.STORE_KEY]).version, 6);
   } finally { delete globalThis.localStorage; SM.setState(null); }
 });
 test("19.11 v5 Поставщики: ИНН/телефон/нал-безнал, поиск по первым буквам, оплата только отметка — касса не меняется", () => {
@@ -706,4 +706,148 @@ test("19.11 v5 «Расходует со склада»: своя услуга �
   // пустой список убирает нормы, повторное сохранение не дублирует
   W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 1 }]); W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 1 }]); assert.equal(W.normsFor(S, add.key).length, 1);
   W.setServiceUses(S, add.key, []); assert.equal(W.normsFor(S, add.key).length, 0);
+});
+
+// ---------- v6 (решения Артёма 19.11.2026): прайс ШиноМонстр, вулканизация от 2000, ремонт литых дисков, две надбавки ----------
+const V6_FLAT = [ // [название, цена, «от»?]
+  ["Медная смазка ступицы", 50, false], ["Зачистка ступицы (глубокая)", 300, false], ["Установка камеры", 300, false], ["Проверка камеры", 100, false],
+  ["Замена вентиля", 150, false], ["Замена золотника", 100, false], ["Демонтаж секреток", 1000, true], ["Демонтаж сложных болтов", 500, true],
+  ["Балансировка свыше 100 г (доплата)", 100, false], ["Установка датчика давления", 300, false], ["Удаление клейкой ленты с диска", 300, false],
+  ["Снятие запасного колеса", 200, false], ["Боковой порез", 1500, true], ["Дошиповка (1 шип)", 25, false], ["Замена шипа", 35, false]
+];
+const V6_ALLOY = { R14: 1500, R15: 1800, R16: 2000, R17: 2400, R18: 2800, R19: 3200, R20: 3600, R21: 4000, R22: 4500 };
+test("v6 Новые доп. услуги: названия и цены ровно по решению Артёма, «от» — ручная цена; выездного шиномонтажа нет", () => {
+  const S = fresh(); const ex = S.prices.extras.items;
+  assert.equal(ex.length, 12 + V6_FLAT.length + 9);
+  V6_FLAT.forEach(([name, v, from]) => {
+    const it = ex.find((x) => x.name === name); assert.ok(it, name);
+    if (from) { assert.equal(it.manualPrice, true, name); assert.equal(it.fromPrice, v, name); assert.equal(it.note, "от " + v + " ₽ — ввести цену", name); assert.equal(it.price, undefined, name); }
+    else { assert.equal(it.price, v, name); assert.ok(!it.manualPrice, name); }
+    const tile = SM.prices.find(S.prices, "f:" + name, "passenger", "R16"); assert.ok(tile, name);
+    assert.equal(tile.manual, from); assert.equal(tile.price, from ? null : v); assert.equal(tile.surchargeEligible, false, name + " — без надбавки");
+  });
+  assert.ok(!ex.some((x) => /Выездн/i.test(x.name)));
+  // существующие позиции не изменились
+  const old = { "Обработка герметиком": 150, "Утилизация б/у автошины": 50, "Ремонт грибком": 550, "Ремонт жгутом": 500, "Зачистка обода диска": 150, "Проверка балансировки": 100, "Подкачка": 100, "Упаковочные пакеты": 200 };
+  Object.keys(old).forEach((n) => assert.equal(ex.find((x) => x.name === n).price, old[n], n));
+  assert.equal(ex.find((x) => x.name === "Ремонт камеры").fromPrice, 200); assert.equal(ex.find((x) => x.name === "Правка дисков").fromPrice, 1200);
+  assert.equal(ex.find((x) => x.name === "Доп. работы мастера").fromPrice, 100);
+  // ручная цена «от» принимается в заказ только > 0
+  const o = { items: [], history: [] };
+  assert.equal(SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Боковой порез", "passenger", "R16"), 1, {}, "т", 0).ok, false);
+  assert.equal(SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Боковой порез", "passenger", "R16"), 1, {}, "т", 1800).ok, true);
+});
+test("v6 Вулканизация бескамерной — от 2000 (было 1500)", () => {
+  const S = fresh(); const v = S.prices.extras.items.find((x) => x.name === "Вулканизация бескамерной");
+  assert.equal(v.fromPrice, 2000); assert.equal(v.note, "от 2000 ₽ — ввести цену"); assert.equal(v.manualPrice, true);
+  assert.equal(SM.prices.find(S.prices, "f:Вулканизация бескамерной", "passenger", "R16").fromPrice, 2000);
+});
+test("v6 Ремонт литого диска R14…R22: цены «от» за 1 диск; на кассе виден только пункт выбранного радиуса; склад не затрагивается", () => {
+  const S = fresh();
+  Object.keys(V6_ALLOY).forEach((r) => {
+    const name = "Ремонт литого диска " + r, it = S.prices.extras.items.find((x) => x.name === name);
+    assert.ok(it, name); assert.equal(it.manualPrice, true); assert.equal(it.fromPrice, V6_ALLOY[r], name); assert.equal(it.radiusOnly, r);
+    assert.equal(it.note, "от " + V6_ALLOY[r] + " ₽ за 1 диск — ввести цену");
+    const cat = SM.prices.catalog(S.prices, "passenger", r).filter((t) => /литого диска/.test(t.name));
+    assert.equal(cat.length, 1, r); assert.equal(cat[0].name, name); assert.equal(cat[0].manual, true); assert.equal(cat[0].fromPrice, V6_ALLOY[r]); assert.equal(cat[0].group, "repair");
+  });
+  assert.equal(S.prices.extras.items.filter((x) => /литого диска/.test(x.name)).length, 9); // только литые, стальных нет
+  assert.ok(!S.prices.extras.items.some((x) => /сталь|штамп/i.test(x.name)));
+  ["R13"].forEach((r) => assert.equal(SM.prices.catalog(S.prices, "passenger", r).filter((t) => /литого диска/.test(t.name)).length, 0));
+  assert.equal(SM.prices.catalog(S.prices, "passenger", "R16", { all: true }).filter((t) => /литого диска/.test(t.name)).length, 9); // админка видит все
+  assert.equal(S.prices.extras.items.find((x) => x.name === "Правка дисков").fromPrice, 1200); // «Правка дисков» без изменений
+  // не попадают на склад ремонта: ни при заполнении, ни при продаже
+  SM.warehouse.ensureRepairStock(S);
+  const bad = /литого|ступиц|камер|вентил|золотник|секрет|болт|датчик|клейк|запасн|порез|шип|Балансировка свыше/i;
+  assert.ok(!S.warehouse.items.some((i) => bad.test(i.name)));
+  assert.ok(!S.warehouse.norms.some((n) => /^f:(Ремонт литого|Медная|Зачистка ступицы|Установка камеры|Проверка камеры|Замена|Демонтаж|Балансировка свыше|Установка датчика|Удаление|Снятие запасного|Боковой|Дошиповка)/.test(n.key)));
+  SM.warehouse.REPAIR_SKIP.indexOf("Ремонт литого диска R16") >= 0 || assert.fail("REPAIR_SKIP");
+  SM.shift.open(S, ["a"], 0); const o = SM.orders.create(S, { plate: "А123АА77" }, "т").order;
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Ремонт литого диска R16", "passenger", "R16"), 2, {}, "т", 2300);
+  const r = SM.orders.pay(S, o, "cash", "т"); assert.equal(r.ok, true); assert.equal(r.receipt.total, 4600); assert.equal(r.writeoff.lines.length, 0);
+});
+test("v6 Надбавки: RunFlat +20% и низкий профиль +20% считаются отдельно, на те же услуги; не складываются", () => {
+  const S = fresh(); const ctx = { radius: "R16", typeKey: "passenger" };
+  const mk = () => { const o = { items: [], history: [] }; ["r:Переобувка 4 колеса", "r:Балансировка", "r:Монтаж", "f:Ремонт жгутом"].forEach((k) => SM.orders.addItem(S, o, SM.prices.find(S.prices, k, "passenger", "R16"), 1, ctx, "т")); return o; };
+  assert.equal(S.settings.runflatPct, 20); assert.equal(S.settings.lowProfilePct, 20); assert.equal(S.settings.surchargePct, undefined);
+  const base = 3700 + 330 + 205 + 500, elig = 3700 + 205;
+  let o = mk(), t = SM.cart.totals(o, S.settings);
+  assert.equal(t.surcharge, 0); assert.equal(t.surchargeKind, "");
+  o.runflat = true; t = SM.cart.totals(o, S.settings);
+  assert.equal(t.surchargeBase, elig); assert.equal(t.surcharge, 781); assert.equal(t.surchargePct, 20); assert.equal(t.surchargeKind, "runflat"); assert.equal(t.total, base + 781);
+  o.runflat = false; o.lowprofile = true; t = SM.cart.totals(o, S.settings);
+  assert.equal(t.surchargeBase, elig); assert.equal(t.surcharge, 781); assert.equal(t.surchargePct, 20); assert.equal(t.surchargeKind, "lowprofile"); assert.equal(t.total, base + 781); // 3905 × 20% = 781
+  o.runflat = true; t = SM.cart.totals(o, S.settings); // оба при 20% — итого +20%, не 40%; при равных процентах вид «низкий профиль»
+  assert.equal(t.surcharge, 781); assert.equal(t.surchargePct, 20); assert.equal(t.surchargeKind, "lowprofile"); assert.equal(t.total, base + 781);
+  // проценты из настроек; при оба — берётся большее из двух, даже если владелец поменял местами
+  S.settings.runflatPct = 60; S.settings.lowProfilePct = 30; t = SM.cart.totals(o, S.settings);
+  assert.equal(t.surchargeKind, "runflat"); assert.equal(t.surcharge, Math.round(elig * 0.6));
+  S.settings.runflatPct = 20; S.settings.lowProfilePct = 20;
+  // скидка постоянному — от суммы с надбавкой 20%
+  o.runflat = false; o.loyalty = true; t = SM.cart.totals(o, S.settings);
+  assert.equal(t.discountBase, base + 781); assert.equal(t.loyalty, Math.round((base + 781) * 0.1));
+  // надбавка не действует на балансировку, ремонт и новые доп. услуги
+  const o2 = { items: [], lowprofile: true, history: [] };
+  ["r:Балансировка", "f:Ремонт жгутом", "f:Установка камеры", "f:Балансировка свыше 100 г (доплата)", "r:Комплекс без смены резины"].forEach((k) => SM.orders.addItem(S, o2, SM.prices.find(S.prices, k, "passenger", "R16"), 1, ctx, "т"));
+  assert.equal(SM.cart.totals(o2, S.settings).surcharge, 0);
+  // Газель: пакет 6150, низкий профиль +20% = 1230
+  const og = { items: [], lowprofile: true, history: [] }; SM.orders.addItem(S, og, SM.prices.find(S.prices, "r:Переобувка 4 колеса", "gazel", "R16"), 1, { radius: "R16", typeKey: "gazel" }, "т");
+  assert.equal(SM.cart.totals(og, S.settings).surcharge, 1230);
+  // старая настройка surchargePct без новых ключей всё ещё читается как RunFlat
+  assert.equal(SM.cart.surchargeInfo({ runflat: true }, { surchargePct: 25 }).pct, 25);
+});
+test("v6 Флаги заказа: история заказа, чек хранит оба флага, «Как в прошлый раз» переносит оба", () => {
+  const S = fresh(); SM.shift.open(S, ["a"], 0);
+  const cl = SM.addClient(S, { name: "Тест", phone: "+79990001122", plate: "Х123ХХ77", typeKey: "passenger" }).client;
+  const o = SM.orders.create(S, { plate: "Х123ХХ77" }, "т").order; SM.orders.attachClient(S, o, cl, "т");
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "r:Переобувка 4 колеса", "passenger", "R16"), 1, { radius: "R16", typeKey: "passenger" }, "т");
+  SM.orders.setFlag(S, o, "runflat", true, "т"); SM.orders.setFlag(S, o, "lowprofile", true, "т");
+  const hist = o.history.map((h) => h.text).join("\n");
+  assert.match(hist, /Надбавка \+20% RunFlat включена/); assert.match(hist, /Надбавка \+20% низкий профиль включена/); assert.match(hist, /только большая надбавка \+20%/);
+  SM.orders.setFlag(S, o, "runflat", false, "т"); assert.match(o.history[o.history.length - 1].text, /Надбавка \+20% RunFlat выключена/);
+  const r = SM.orders.pay(S, o, "cash", "т").receipt;
+  assert.equal(r.lowprofile, true); assert.equal(r.runflat, false); assert.equal(r.totals.surchargeKind, "lowprofile"); assert.equal(r.totals.surcharge, 740); assert.equal(r.total, 3700 + 740);
+  const o2 = SM.orders.create(S, { plate: "Х123ХХ77" }, "т").order; SM.orders.repeatLast(S, o2, "т");
+  assert.equal(o2.lowprofile, true); assert.equal(o2.runflat, false);
+  // чек только с RunFlat переносит RunFlat 20%
+  const o3 = SM.orders.create(S, { plate: "Е555ЕЕ77" }, "т").order;
+  SM.orders.addItem(S, o3, SM.prices.find(S.prices, "r:Монтаж", "passenger", "R16"), 4, { radius: "R16", typeKey: "passenger" }, "т"); o3.runflat = true;
+  assert.equal(SM.cart.totals(o3, S.settings).surcharge, Math.round(205 * 4 * 0.2));
+});
+test("v6 Миграция v5 → v6: runflat-заказы остаются RunFlat 20%, surchargePct → runflatPct, lowProfilePct 20, прайс дополняется, цены владельца целы", () => {
+  const mem = {}; globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => (mem[k] = String(v)), removeItem: (k) => delete mem[k] };
+  try {
+    SM.clock.fixed = T0; const st = SM.seed({ now: T0 });
+    // собираем состояние «как v5»
+    st.version = 5; st.settings.surchargePct = 25; delete st.settings.runflatPct; delete st.settings.lowProfilePct;
+    const ex = st.prices.extras.items; const oldLen = 12;
+    st.prices.extras.items = ex.slice(0, oldLen); // только старые 12
+    st.prices.extras.items.find((x) => x.name === "Вулканизация бескамерной").fromPrice = 1500; st.prices.extras.items.find((x) => x.name === "Вулканизация бескамерной").note = "от 1500 ₽ — ввести цену";
+    st.prices.extras.items.find((x) => x.name === "Подкачка").price = 120; // правка владельца
+    st.prices.hidden = ["f:Упаковочные пакеты"];
+    st.orders.forEach((o) => delete o.lowprofile); st.receipts.forEach((r) => delete r.lowprofile);
+    const rfBefore = st.receipts.filter((r) => r.runflat && r.totals.surcharge > 0); assert.ok(rfBefore.length > 0);
+    const rfSums = rfBefore.map((r) => r.totals.surcharge + "|" + r.total);
+    st.orders.push({ id: "o-rf", no: 999, plate: "М111ММ77", status: "new", items: [], runflat: true, loyalty: false, discount: null, masters: [], history: [], createdAt: T0 });
+    mem[SM.STORE_KEY] = JSON.stringify(st);
+    const S = SM.reload();
+    assert.equal(S.version, 6); assert.equal(JSON.parse(mem[SM.STORE_KEY]).version, 6);
+    assert.equal(S.settings.runflatPct, 25); assert.equal(S.settings.lowProfilePct, 20); assert.equal(S.settings.surchargePct, undefined);
+    assert.equal(S.orders.find((o) => o.id === "o-rf").runflat, true); assert.equal(S.orders.find((o) => o.id === "o-rf").lowprofile, false);
+    assert.equal(SM.cart.totals(S.orders.find((o) => o.id === "o-rf"), S.settings).surchargePct, 25);
+    assert.deepEqual(S.receipts.filter((r) => r.runflat && r.totals.surcharge > 0).map((r) => r.totals.surcharge + "|" + r.total), rfSums); // прошлые чеки не пересчитаны
+    assert.ok(S.receipts.every((r) => r.lowprofile === false));
+    const sx = S.prices.extras.items;
+    V6_FLAT.forEach(([name, v, from]) => { const it = sx.find((x) => x.name === name); assert.ok(it, name); assert.equal(from ? it.fromPrice : it.price, v); });
+    Object.keys(V6_ALLOY).forEach((r) => assert.equal(sx.find((x) => x.name === "Ремонт литого диска " + r).fromPrice, V6_ALLOY[r]));
+    assert.equal(sx.find((x) => x.name === "Вулканизация бескамерной").fromPrice, 2000); assert.equal(sx.find((x) => x.name === "Вулканизация бескамерной").note, "от 2000 ₽ — ввести цену");
+    assert.equal(sx.find((x) => x.name === "Подкачка").price, 120); assert.deepEqual(S.prices.hidden, ["f:Упаковочные пакеты"]);
+    assert.equal(sx.length, 12 + V6_FLAT.length + 9);
+    // повторная загрузка ничего не дублирует
+    SM.save(); const S2 = SM.reload(); assert.equal(S2.prices.extras.items.length, sx.length);
+    // вулканизация, которую владелец уже поменял, не затирается
+    const st3 = JSON.parse(mem[SM.STORE_KEY]); st3.version = 5; st3.prices.extras.items.find((x) => x.name === "Вулканизация бескамерной").fromPrice = 1800; st3.settings.surchargePct = 20; delete st3.settings.runflatPct;
+    mem[SM.STORE_KEY] = JSON.stringify(st3); const S3 = SM.reload();
+    assert.equal(S3.prices.extras.items.find((x) => x.name === "Вулканизация бескамерной").fromPrice, 1800); assert.equal(S3.settings.runflatPct, 20);
+  } finally { delete globalThis.localStorage; SM.setState(null); SM.clock.fixed = null; }
 });

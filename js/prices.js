@@ -6,7 +6,7 @@
   P.GROUPS = [ { key: "tire", label: "Шиномонтаж" }, { key: "repair", label: "Ремонт" }, { key: "small", label: "Мелочи" } ];
   P.RADII = ["R13", "R14", "R15", "R16", "R17", "R18", "R19", "R20", "R21", "R22"];
   P.KITS = { "Переобувка 4 колеса": "= 4 × «Итого за 1 колесо»", "Комплекс без смены резины": "снятие/установка + балансировка 4 колёс", "Снятие и установка 4-х колёс": "без монтажа и балансировки" };
-  P.REPAIR_EXTRAS = ["Ремонт грибком", "Ремонт жгутом", "Ремонт камеры", "Вулканизация бескамерной", "Правка дисков"];
+  P.REPAIR_EXTRAS = ["Ремонт грибком", "Ремонт жгутом", "Ремонт камеры", "Вулканизация бескамерной", "Правка дисков", "Установка камеры", "Проверка камеры", "Боковой порез"];
   P.GIFT = { key: "gift", name: "Акция: пакеты в подарок", price: 0, gift: true };
   P.STARTER = ["r:Переобувка 4 колеса", "r:Комплекс без смены резины", "r:Итого за 1 колесо", "r:Балансировка", "r:Монтаж", "r:Демонтаж", "f:Ремонт жгутом", "f:Ремонт грибком", "f:Обработка герметиком"];
   /** Газель — 6 колёс (сдвоенные задние): комплекты «… 4 колеса» на Газели называются «6 колёс». */
@@ -54,7 +54,8 @@
     const all = P.catalogAll(prices, typeKey, radius);
     if (opts && opts.all) return all;
     const hid = prices.hidden || [];
-    return all.filter((t) => hid.indexOf(t.key) < 0);
+    // пункты с radiusOnly (ремонт литого диска) на кассе видны только для выбранного радиуса; в админке (opts.all) — все
+    return all.filter((t) => hid.indexOf(t.key) < 0 && (!t.radiusOnly || t.radiusOnly === radius));
   };
   P.isHidden = (prices, key) => (prices.hidden || []).indexOf(key) >= 0;
   P.catalogAll = function (prices, typeKey, radius) {
@@ -66,7 +67,7 @@
       out.push({ key: "r:" + svc, name: gz ? P.GAZEL_NAMES[svc] : svc, price: price, radial: true, group: "tire", kind: P.KITS[svc] ? "kit" : "single", note: gz ? P.GAZEL_NOTES[svc] : P.KITS[svc] || "", wheels: P.KITS[svc] ? P.wheels(typeKey) : 1, surchargeEligible: P.isSurcharge(prices, svc), unit: P.KITS[svc] ? "" : "шт" });
     });
     (prices.repair.items || []).forEach((it) => out.push(flat(prices, it, "repair")));
-    (prices.extras.items || []).forEach((it) => out.push(flat(prices, it, P.REPAIR_EXTRAS.indexOf(it.name) >= 0 ? "repair" : "small")));
+    (prices.extras.items || []).forEach((it) => out.push(flat(prices, it, P.REPAIR_EXTRAS.indexOf(it.name) >= 0 || it.radiusOnly ? "repair" : "small")));
     (prices.custom || []).forEach((c) => out.push(customTile(c, typeKey, radius)));
     out.push({ key: "gift", name: P.GIFT.name, price: 0, gift: true, group: "small", kind: "single", note: "0 ₽, по умолчанию 4 шт" });
     return out;
@@ -123,8 +124,22 @@
     return { ok: true, service: c };
   };
   function flat(prices, it, group) {
-    return { key: "f:" + it.name, name: it.name, price: it.manualPrice ? null : Number(it.price), manual: !!it.manualPrice, fromPrice: it.fromPrice || 0, note: it.note || "", group: group, kind: "single", surchargeEligible: P.isSurcharge(prices, it.name), radial: false };
+    return { key: "f:" + it.name, name: it.name, price: it.manualPrice ? null : Number(it.price), manual: !!it.manualPrice, fromPrice: it.fromPrice || 0, note: it.note || "", group: group, kind: "single", surchargeEligible: P.isSurcharge(prices, it.name), radial: false, radiusOnly: it.radiusOnly || "" };
   }
+  /**
+   * Миграция прайса v5 → v6 (решение Артёма 19.11.2026): новые доп. услуги и «Ремонт литого диска» добавляются по названию, если их ещё нет
+   * (существующие позиции и цены владельца не трогаем); «Вулканизация бескамерной» от 1500 → от 2000, только если владелец не менял 1500.
+   * Возвращает { added: [названия], vulc: bool }.
+   */
+  P.ensureV6Prices = function (prices) {
+    const out = { added: [], vulc: false }; if (!prices || !prices.extras) return out;
+    const items = (prices.extras.items = prices.extras.items || []);
+    const ref = (root.PRICES && root.PRICES.extras && root.PRICES.extras.items) || [];
+    ref.forEach((it) => { if (!items.some((x) => x.name === it.name)) { items.push(JSON.parse(JSON.stringify(it))); out.added.push(it.name); } });
+    const v = items.find((x) => x.name === "Вулканизация бескамерной");
+    if (v && v.manualPrice && Number(v.fromPrice) === 1500) { v.fromPrice = 2000; if (!v.note || v.note === "от 1500 ₽ — ввести цену") v.note = "от 2000 ₽ — ввести цену"; out.vulc = true; }
+    return out;
+  };
   P.find = function (prices, key, typeKey, radius) { return P.catalog(prices, typeKey, radius).find((t) => t.key === key) || null; };
   /** «Частые»: топ по количеству в чеках за 60 дней, иначе стартовый набор. */
   P.frequent = function (S, limit) {

@@ -19,7 +19,7 @@
     if (plate) { const ex = O.open(S).find((o) => o.plate === plate); if (ex) return { ok: true, order: ex, existed: true }; }
     const fc = plate ? SM.clients.findByPlate(S, plate) : null;
     const client = fc ? fc.client : null;
-    const o = { id: SM.uid("o"), no: ++S.orderSeq, plate, queueNo, clientId: client ? client.id : null, carId: fc ? fc.car.id : null, status: "new", items: [], runflat: false, loyalty: false, discount: null, masters: [], history: [], createdAt: SM.now(), shiftId: (SM.shift.current(S) || {}).id || null, bookingId: data.bookingId || null, note: data.note || "" };
+    const o = { id: SM.uid("o"), no: ++S.orderSeq, plate, queueNo, clientId: client ? client.id : null, carId: fc ? fc.car.id : null, status: "new", items: [], runflat: false, lowprofile: false, loyalty: false, discount: null, masters: [], history: [], createdAt: SM.now(), shiftId: (SM.shift.current(S) || {}).id || null, bookingId: data.bookingId || null, note: data.note || "" };
     if (client && SM.clientVisits(S, client.id).length >= 1) o.loyalty = true;
     O.log(o, who, "Заказ открыт по " + (plate ? "госномеру " + plate : "номеру очереди " + queueNo) + (client ? " · клиент найден: " + (client.name || SM.phoneShow(client.phone)) + (SM.clients.cars(client).length > 1 ? " (машина " + SM.clients.label(fc.car) + ")" : "") : ""));
     if (o.loyalty) O.log(o, who, "Скидка постоянному клиенту " + S.settings.loyaltyPct + "% (автоматически)");
@@ -76,7 +76,9 @@
   };
   O.setFlag = function (S, o, flag, val, who) {
     const prev = o[flag]; o[flag] = !!val;
-    O.log(o, who, (flag === "runflat" ? "Надбавка +" + S.settings.surchargePct + "% RunFlat/низкий профиль" : "Скидка постоянному " + S.settings.loyaltyPct + "%") + (val ? " включена" : " выключена"));
+    const lbl = flag === "runflat" ? "Надбавка +" + SM.cart.surchargeInfo({ runflat: true }, S.settings).pct + "% RunFlat" : flag === "lowprofile" ? "Надбавка +" + SM.cart.surchargeInfo({ lowprofile: true }, S.settings).pct + "% низкий профиль" : "Скидка постоянному " + S.settings.loyaltyPct + "%";
+    O.log(o, who, lbl + (val ? " включена" : " выключена"));
+    if (val && (flag === "runflat" || flag === "lowprofile") && o.runflat && o.lowprofile) { const sc = SM.cart.surchargeInfo(o, S.settings); O.log(o, who, "Включены оба флага — действует только большая надбавка +" + sc.pct + "% (" + SM.cart.surchargeLabel(sc.kind) + "), без сложения"); }
     return { ok: true };
   };
   /** Ручная скидка с проверкой лимита. */
@@ -107,7 +109,7 @@
     const stRecs = o.items.filter((i) => i.storageId).map((i) => S.storage.find((x) => x.id === i.storageId));
     if (stRecs.some((x) => !x || x.paid)) return { ok: false, msg: "Хранение в заказе уже оплачено или не найдено — уберите эту позицию" };
     const stock = SM.products.checkStock(S, o.items); if (!stock.ok) return stock;
-    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: o.id, kind: "service", payment, total: t.total, totals: t, items: o.items.map((i) => Object.assign({}, i)), runflat: o.runflat, loyalty: o.loyalty, clientId: o.clientId, carId: o.carId || null, plate: o.plate, masters: o.masters.slice(), who: who || "" };
+    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: o.id, kind: "service", payment, total: t.total, totals: t, items: o.items.map((i) => Object.assign({}, i)), runflat: !!o.runflat, lowprofile: !!o.lowprofile, loyalty: o.loyalty, clientId: o.clientId, carId: o.carId || null, plate: o.plate, masters: o.masters.slice(), who: who || "" };
     S.receipts.push(r);
     if (payment === "cash") SM.shift.drawerMove(S, t.total, "sale", "Чек №" + r.no, r.ts);
     stRecs.forEach((x) => { x.paid = true; x.payment = payment; x.paidAt = r.ts; x.receiptId = r.id; });
@@ -134,6 +136,7 @@
       if (res.ok) n++;
     });
     if (last.runflat && !o.runflat) o.runflat = true;
+    if (last.lowprofile && !o.lowprofile) o.lowprofile = true;
     O.log(o, who, "«Как в прошлый раз» — повтор чека №" + last.no + " от " + SM.fmtDate(last.ts));
     return { ok: true, n, last };
   };

@@ -81,7 +81,7 @@
     if (!p || p.status === "done" || p.status === "cancel") return { ok: false, msg: "Наряд уже закрыт" };
     const sh = SM.shift.current(S); if (!sh) return { ok: false, msg: "Сначала откройте смену (вкладка «Смена»)" };
     const t = PN.totals(S, p); if (!(t.total > 0)) return { ok: false, msg: "В наряде нет сумм" };
-    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: null, paintId: p.id, kind: "service", payment, total: t.total, totals: t, items: p.items.map((i) => Object.assign({}, i)), runflat: false, loyalty: false, clientId: p.clientId, carId: p.carId || null, plate: p.plate, masters: SM.shift.atWork(S, sh).slice(), who: who || "" };
+    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: null, paintId: p.id, kind: "service", payment, total: t.total, totals: t, items: p.items.map((i) => Object.assign({}, i)), runflat: false, lowprofile: false, loyalty: false, clientId: p.clientId, carId: p.carId || null, plate: p.plate, masters: SM.shift.atWork(S, sh).slice(), who: who || "" };
     S.receipts.push(r);
     if (payment === "cash") SM.shift.drawerMove(S, t.total, "sale", "Чек №" + r.no + " (покраска)", r.ts);
     const wo = SM.warehouse.autoWriteOff(S, r); r.materialCost = wo.cost;

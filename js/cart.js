@@ -1,16 +1,28 @@
-/* Расчёт заказа: надбавка +20% (как сейчас), скидка постоянным 10%, ручная скидка, лимит скидки. */
+/* Расчёт заказа: надбавка RunFlat +20% / низкий профиль +20% (не складываются), скидка постоянным 10%, ручная скидка, лимит скидки. */
 (function (root) {
   const SM = root.SM;
   const C = (SM.cart = {});
   /**
-   * base = Σ price×qty; surcharge = 20% от строк «Монтаж/Демонтаж/Переобувка 4 колеса/Итого за 1 колесо» целиком;
+   * base = Σ price×qty; surcharge = RunFlat 20% (runflatPct) или низкий профиль 20% (lowProfilePct) от строк
+   * «Монтаж/Демонтаж/Переобувка 4 колеса/Итого за 1 колесо» целиком; если включены оба флага — только больший процент, без сложения;
    * subtotal = base + surcharge; loyalty = 10% от subtotal; manual = ₽ или % от subtotal; total = subtotal − скидки.
    */
+  /** Какая надбавка действует на заказ: { kind: "runflat" | "lowprofile" | "", pct }. Оба флага — берётся больший процент (не сумма). */
+  C.surchargeInfo = function (order, settings) {
+    settings = settings || SM.DEFAULT_SETTINGS;
+    const num = (v, d) => (v != null && v !== "" && isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+    const rf = order && order.runflat ? num(settings.runflatPct != null ? settings.runflatPct : settings.surchargePct, 20) : -1;
+    const lp = order && order.lowprofile ? num(settings.lowProfilePct, 20) : -1;
+    if (rf < 0 && lp < 0) return { kind: "", pct: 0 };
+    return lp >= rf ? { kind: "lowprofile", pct: lp } : { kind: "runflat", pct: rf };
+  };
+  C.surchargeLabel = (kind) => (kind === "lowprofile" ? "низкий профиль" : kind === "runflat" ? "RunFlat" : "");
   C.totals = function (order, settings) {
     settings = settings || SM.DEFAULT_SETTINGS;
     let base = 0, sb = 0, storage = 0, goods = 0, paint = 0;
     (order.items || []).forEach((i) => { const l = (Number(i.price) || 0) * (Number(i.qty) || 0); if (i.goods) { goods += l; return; } if (i.key === "paint") { paint += l; return; } if (i.noDiscount) { storage += l; return; } base += l; if (i.surchargeEligible) sb += l; });
-    const surcharge = order.runflat ? Math.round(sb * (settings.surchargePct || 20) / 100) : 0;
+    const sc = C.surchargeInfo(order, settings);
+    const surcharge = sc.kind ? Math.round(sb * sc.pct / 100) : 0;
     // Скидки (постоянному и ручная) считаются только от услуг; позиции хранения (noDiscount) — без скидки.
     const discountBase = Math.round(base + surcharge);
     const subtotal = discountBase + Math.round(storage) + Math.round(goods) + Math.round(paint);
@@ -20,7 +32,7 @@
     if (d && d.value > 0) manual = d.type === "pct" ? Math.round(discountBase * d.value / 100) : Math.round(d.value);
     let discount = Math.min(discountBase, loyalty + manual);
     const services = discountBase - discount;
-    return { base: Math.round(base), surchargeBase: Math.round(sb), surcharge, discountBase, storage: Math.round(storage), subtotal, loyalty, manual, discount, discountPct: discountBase > 0 ? (discount / discountBase) * 100 : 0, services, goods: Math.round(goods), paint: Math.round(paint), total: Math.round(services + storage + goods + paint), count: (order.items || []).reduce((s, i) => s + (i.gift || i.noDiscount || i.goods || i.key === "paint" ? 0 : i.qty), 0) };
+    return { base: Math.round(base), surchargeBase: Math.round(sb), surcharge, surchargePct: sc.pct, surchargeKind: sc.kind, discountBase, storage: Math.round(storage), subtotal, loyalty, manual, discount, discountPct: discountBase > 0 ? (discount / discountBase) * 100 : 0, services, goods: Math.round(goods), paint: Math.round(paint), total: Math.round(services + storage + goods + paint), count: (order.items || []).reduce((s, i) => s + (i.gift || i.noDiscount || i.goods || i.key === "paint" ? 0 : i.qty), 0) };
   };
   /** Лимит скидки: max % и max ₽ (₽ пересчитываются в % от заказа). 0 = без ограничений. */
   C.discountLimit = function (settings, subtotal) {

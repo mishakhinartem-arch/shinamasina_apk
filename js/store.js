@@ -3,13 +3,14 @@
   const SM = root.SM;
   const KEY = "shinamashina_web_demo_v1";
   const listeners = [];
-  SM.STATE_VERSION = 5; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь; 4: несколько машин у клиента, история карточки, Газель 6 колёс; 5: позиции ремонта на складе и нормы, справочник поставщиков (v3/v4 мигрируются, старше — пересоздаются)
+  SM.STATE_VERSION = 6; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь; 4: несколько машин у клиента, история карточки, Газель 6 колёс; 5: позиции ремонта на складе и нормы, справочник поставщиков (v3/v4 мигрируются, старше — пересоздаются); 6: две надбавки (RunFlat 20% и низкий профиль 20%), новые доп. услуги, ремонт литого диска
   SM.DEFAULT_SETTINGS = {
     pin: "1234",
     discountMaxPct: 15,          // 0 = без ограничений
     discountMaxRub: 1000,        // 0 = без ограничений; ₽ пересчитываются в % от заказа
     loyaltyPct: 10,
-    surchargePct: 20,
+    runflatPct: 20,              // надбавка RunFlat, % (раньше было одно поле surchargePct)
+    lowProfilePct: 20,           // надбавка низкий профиль, % (решение Артёма 19.11.2026)
     minPay: 4000,
     minPayHours: 8,
     workStart: "09:00",
@@ -71,13 +72,29 @@
       ui: { operator: null, radius: "R16", type: "passenger", activeOrderId: null }
     };
   };
+  /**
+   * Миграция v5 → v6 (19.11.2026): две надбавки вместо одной. Старые заказы и чеки с runflat:true остаются RunFlat (20%);
+   * settings.surchargePct → runflatPct (surchargePct удаляется), lowProfilePct = 20; в прайс добавляются новые доп. услуги и «Ремонт литого диска»,
+   * «Вулканизация бескамерной» от 1500 → от 2000 (если владелец не менял цену).
+   */
+  SM.migrateV6 = function (st) {
+    const s = (st.settings = st.settings || {});
+    if (s.runflatPct == null) s.runflatPct = Number(s.surchargePct) >= 0 && s.surchargePct != null ? Number(s.surchargePct) : 20;
+    delete s.surchargePct;
+    if (s.lowProfilePct == null) s.lowProfilePct = 20;
+    (st.orders || []).forEach((o) => { if (o.lowprofile == null) o.lowprofile = false; });
+    (st.receipts || []).forEach((r) => { if (r.lowprofile == null) r.lowprofile = false; });
+    if (SM.prices && SM.prices.ensureV6Prices) SM.prices.ensureV6Prices(st.prices);
+    st.version = 6;
+    return st;
+  };
   let cache = null;
   SM.load = function () {
     if (cache) return cache;
     if (typeof localStorage === "undefined") { cache = SM.emptyState(); return cache; }
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) { let st = JSON.parse(raw); const v0 = st.version; if (st.version === 3 && SM.clients) st = SM.clients.migrateV3(st); if (st.version === 4 && SM.warehouse) st = SM.warehouse.migrateRepairStock(st); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); if (v0 !== st.version) SM.save(); return cache; } }
+      if (raw) { let st = JSON.parse(raw); const v0 = st.version; if (st.version === 3 && SM.clients) st = SM.clients.migrateV3(st); if (st.version === 4 && SM.warehouse) st = SM.warehouse.migrateRepairStock(st); if (st.version === 5) st = SM.migrateV6(st); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); if (v0 !== st.version) SM.save(); return cache; } }
     } catch (e) { console.warn("bad state", e); }
     cache = SM.seed ? SM.seed() : SM.emptyState();
     SM.save();

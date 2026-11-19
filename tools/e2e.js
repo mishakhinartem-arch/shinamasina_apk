@@ -202,6 +202,23 @@ function ok(c, m) { if (!c) throw new Error("ПРОВАЛ: " + m); log("OK", m);
   ok(barTotal === String(6150 + 1230), "RunFlat +20% на пакет: в нижней полосе итого " + barTotal + " = 6150 + 1230");
   bb = await barBox(); ok(bb.y + bb.height <= 800, "п.7 с заказом полоса итога тоже в пределах экрана");
   await shot("tablet-31-kassa-gazel-order");
+  // v6: два отдельных переключателя; оба при равных 20% — итого +20%, не 40%
+  const bar = async () => (await p.locator("#k-bar [data-total]").innerText()).replace(/\D/g, "");
+  ok(await p.locator('[data-act="runflat"]').count() >= 1 && await p.locator('[data-act="lowprofile"]').count() >= 1, "v6 на кассе два переключателя: RunFlat и низкий профиль");
+  ok(/\+20%\s*RunFlat/.test(await p.locator('.k-left [data-act="runflat"]').first().innerText()) && /\+20%\s*низкий профиль/.test(await p.locator('.k-left [data-act="lowprofile"]').first().innerText()), "v6 подписи «+20% RunFlat» и «+20% низкий профиль»");
+  await click('[data-act="lowprofile"]');
+  ok(await bar() === String(6150 + 1230), "v6 оба флага: итого " + (await bar()) + " = 6150 + 1230 (только 20%, не 40%)");
+  await shot("tablet-77-kassa-two-surcharges");
+  await click('[data-act="runflat"]'); ok(await bar() === String(6150 + 1230), "v6 только низкий профиль +20%: 6150 + 1230");
+  st = await S(); og = st.orders.find((x) => x.plate === "К321МН50" && x.status !== "done"); ok(og.lowprofile === true && !og.runflat, "v6 в заказе lowprofile:true, runflat:false");
+  await click('[data-act="lowprofile"]'); ok(await bar() === "6150", "v6 оба выключены: 6150");
+  await click('[data-act="runflat"]'); ok(await bar() === String(6150 + 1230), "v6 снова RunFlat +20%: 6150 + 1230");
+  // v6: ремонт литого диска — на кассе только пункт выбранного радиуса
+  await click('[data-act="type"][data-t="passenger"]'); await click('[data-act="radius"][data-r="R17"]'); await click('[data-act="tab"][data-t="repair"]');
+  ok(await p.locator('.tile:has-text("Ремонт литого диска R17")').count() === 1 && await p.locator('.tile:has-text("Ремонт литого диска")').count() === 1, "v6 R17: только «Ремонт литого диска R17»");
+  ok(/от\s?2\s?400/.test(await p.locator('.tile:has-text("Ремонт литого диска R17") .pr').innerText()), "v6 R17: «от 2 400 ₽ — ввести цену»");
+  await click('[data-act="radius"][data-r="R13"]'); ok(await p.locator('.tile:has-text("Ремонт литого диска")').count() === 0, "v6 R13: ремонта литого диска нет");
+  await click('[data-act="radius"][data-r="R16"]'); await click('[data-act="tab"][data-t="freq"]');
   // п.11 товары на кассе
   await click('[data-act="tab"][data-t="goods"]'); await shot("tablet-32-kassa-goods");
   const gName = (await S()).products.find((x) => !x.hidden && x.qty > 2).name;
