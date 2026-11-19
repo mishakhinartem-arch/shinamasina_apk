@@ -75,6 +75,29 @@
     w.status = "called"; w.calledAt = SM.now(); w.post = post; w.borrowed = borrowed;
     return { ok: true, ticket: w, post, borrowed };
   };
+  /**
+   * Приёмка в одно нажатие (правка 19.11): «Следующий» ставит первый талон на свободный пост и сразу открывает заказ по нему.
+   * Отдельный шаг «Вызваны — принять машину» больше не нужен. Возвращает { ok, ticket, post, borrowed, order }.
+   */
+  Q.acceptNext = function (S, who, now) {
+    const w = Q.waiting(S, now)[0]; if (!w) return { ok: false, msg: "В очереди никого нет" };
+    return Q.accept(S, w, who, now);
+  };
+  /** Принять конкретный талон: вызвать на пост (если ещё ждёт) и открыть заказ (если его ещё нет). */
+  Q.accept = function (S, q, who, now) {
+    const c = Q.call(S, q, now); if (!c.ok) return c;
+    const dk = Q.day(q);
+    let order = SM.orders.open(S).find((o) => o.queueNo === q.no && SM.dayKey(o.createdAt) === dk) || null, existed = !!order;
+    if (!order) {
+      const r = SM.orders.create(S, q.plate ? { plate: q.plate, queueNo: q.no } : { queueNo: q.no }, who);
+      if (!r.ok) return r;
+      order = r.order; existed = !!r.existed;
+      if (!order.queueNo) order.queueNo = q.no;
+      if (!order.acceptedAt) order.acceptedAt = q.calledAt || SM.now();
+      SM.orders.log(order, who, "Пост " + c.post + " (живая очередь, талон №" + q.no + (c.borrowed ? ", пост записи — успеваем до записи" : "") + ")");
+    }
+    return { ok: true, ticket: q, post: c.post, borrowed: c.borrowed, order, existed };
+  };
   SM.queueNext = function (S) { const r = Q.next(S); return r.ok ? r.ticket : null; };
   /** Освободить пост вручную (машина уехала с поста). Талон закрывается; заказ по записи остаётся открытым до оплаты. */
   Q.release = function (S, n, now) {
@@ -86,16 +109,52 @@
   Q.waiting = (S, now) => Q.today(S, now).filter((q) => q.status === "wait").sort((a, b) => a.no - b.no);
   Q.find = (S, no, dayKey) => S.queue.items.find((q) => q.no === no && Q.day(q) === (dayKey || SM.dayKey(SM.now()))) || null;
   /**
-   * Примерное ожидание, мин: (Σ времени машин впереди по их услуге + машины на постах очереди × ½ × «Полный шиномонтаж») / число постов очереди.
-   * Округление вверх до 5 мин. Это ориентир, не обещание.
+   * Примерное ожидание, мин — моделируем ВСЕ посты (правка 19.11: раньше вся очередь делилась только на пост 3,
+   * и при двух свободных постах записи клиент видел «≈ 80 мин»).
+   * 1) Каждый пост свободен сейчас, либо в момент «начало + время услуги» занятой машины (не раньше чем через 5 мин).
+   * 2) Сегодняшние записи «Новая» (не раньше чем сейчас − 30 мин) раскладываются по постам записи (кто раньше освободится) как занятые интервалы.
+   * 3) Талоны впереди по порядку встают на пост, где могут начать раньше всех (окно до записи учитывается).
+   * 4) Ожидание = начало интервала этого талона − сейчас, вверх до 5 мин. Это ориентир, не обещание.
    */
+  Q.model = function (S, now) {
+    now = now || SM.now();
+    const st = Q.postsState(S, now), P = Q.posts(S), MIN = 60e3;
+    const posts = st.map((p) => {
+      let freeAt = now;
+      if (p.occ) {
+        let start = now, dur = Q.dur(S, null);
+        if (p.occ.type === "queue") { start = p.occ.q.calledAt || p.occ.q.ts || now; dur = Q.dur(S, p.occ.q); }
+        else { const o = p.occ.order, b = p.occ.booking; start = o.acceptedAt || o.createdAt || now; dur = b && SM.booking ? SM.booking.durMin(S, b.direction) : dur; }
+        freeAt = Math.max(start + dur * MIN, now + 5 * MIN);
+      }
+      return { n: p.n, kind: p.kind, freeAt, blocks: [] };
+    });
+    // Записи раскладываем по постам записи (вне сезона — по всем постам)
+    const bkPosts = posts.filter((p) => P.bookingPosts.indexOf(p.n) >= 0);
+    const target = bkPosts.length ? bkPosts : posts;
+    const dk = SM.dayKey(now);
+    S.bookings.filter((b) => b.date === dk && b.status === "new" && Q.visitTs(b) >= now - 30 * MIN).sort((a, b) => Q.visitTs(a) - Q.visitTs(b)).forEach((b) => {
+      const dur = (SM.booking ? SM.booking.durMin(S, b.direction) : Q.dur(S, null)) * MIN;
+      let best = null;
+      target.forEach((p) => { const s = Q.startOn(p, Math.max(Q.visitTs(b), now), dur); if (!best || s < best.s) best = { p, s }; });
+      best.p.blocks.push([best.s, best.s + dur]);
+    });
+    return posts;
+  };
+  /** Самое раннее начало на посту не раньше t: после освобождения и в окне между занятыми интервалами. */
+  Q.startOn = function (p, t, dur) {
+    let s = Math.max(t, p.freeAt);
+    p.blocks.slice().sort((a, b) => a[0] - b[0]).forEach((bl) => { if (s < bl[1] && s + dur > bl[0]) s = Math.max(s, bl[1]); });
+    return s;
+  };
   Q.waitMin = function (S, no, now) {
-    const P = Q.posts(S), avg = Q.dur(S, null);
-    const t = Q.today(S, now);
-    const aheadMin = t.filter((q) => q.status === "wait" && q.no < no).reduce((s, q) => s + Q.dur(S, q), 0);
-    const busy = Math.min(P.live, t.filter((q) => q.status === "called").length);
-    const m = (aheadMin + busy * 0.5 * avg) / Math.max(1, P.live);
-    return Math.ceil(m / 5) * 5;
+    now = now || SM.now();
+    const posts = Q.model(S, now), t = Q.today(S, now), MIN = 60e3;
+    const place = (dur) => { let best = null; posts.forEach((p) => { const s = Q.startOn(p, now, dur); if (!best || s < best.s) best = { p, s }; }); best.p.blocks.push([best.s, best.s + dur]); return best.s; };
+    t.filter((q) => q.status === "wait" && q.no < no).sort((a, b) => a.no - b.no).forEach((q) => place(Q.dur(S, q) * MIN));
+    const me = t.find((q) => q.no === no);
+    const start = place(Q.dur(S, me || null) * MIN);
+    return Math.max(0, Math.ceil((start - now) / MIN / 5) * 5);
   };
   Q.waitLabel = (min) => (min <= 0 ? "сразу, подъезжайте" : min < 60 ? "≈ " + min + " мин" : "≈ " + Math.floor(min / 60) + " ч " + SM.pad(min % 60) + " мин");
   /** Талон с планшета: только в сезон; повторный ввод того же номера за сегодня — тот же талон. */

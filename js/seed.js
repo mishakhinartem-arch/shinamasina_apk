@@ -24,7 +24,11 @@
     // Грузики (w1, w2) — без норм: учитываются коробками (приход и выдача коробки в работу).
     const N = [["r:Переобувка 4 колеса", "w7", 20], ["r:Итого за 1 колесо", "w7", 5], ["r:Комплекс без смены резины", "w7", 20], ["r:Монтаж", "w7", 5], ["f:Ремонт жгутом", "w4", 1], ["f:Ремонт грибком", "w5", 1], ["f:Грибок №7", "w5", 1], ["f:Обработка герметиком", "w6", 50], ["gift", "w8", 1], ["f:Упаковочные пакеты", "w8", 4], ["f:Заплатка UP–4.5", "w10", 1]];
     N.forEach((n) => SM.warehouse.setNorm(S, n[0], n[1], n[2]));
-    const restock = (ts, k) => { at(ts); SM.warehouse.receive(S, { supplier: pick(["ООО «Шинснаб» (демо)", "ИП Расходник (демо)"]), number: "Д-" + (S.warehouse.docs.length + 1), date: SM.dayKey(ts), lines: W.map((w) => ({ itemId: w[0], qty: Math.max(w[6] ? 1 : 0, Math.round(w[5] * k)), price: w[3] })) }); };
+    // Склад ремонта: заплатки, грибки, ножка — по 1 шт на услугу (закупка 0 = «не задана», цены владелец впишет сам)
+    SM.warehouse.ensureRepairStock(S);
+    // Справочник поставщиков (вымышленные, без ИНН и телефона); оплата поставщику — только отметка, из кассы не вычитается
+    const SUP = [SM.warehouse.saveSupplier(S, { name: "ООО «Шинснаб» (демо)", pay: "cashless" }).supplier, SM.warehouse.saveSupplier(S, { name: "ИП Расходник (демо)", pay: "cash" }).supplier];
+    const restock = (ts, k) => { at(ts); SM.warehouse.receive(S, { supplierId: pick(SUP).id, number: "Д-" + (S.warehouse.docs.length + 1), date: SM.dayKey(ts), lines: W.map((w) => ({ itemId: w[0], qty: Math.max(w[6] ? 1 : 0, Math.round(w[5] * k)), price: w[3] })) }); };
     restock(day0 + 8 * 36e5, 1);
     // Клиенты
     const names = ["Иван", "Пётр", "Ольга", "Сергей", "Анна", "Дмитрий", "Елена", "Николай", "Мария", "Алексей", "Татьяна", "Виктор", "Юлия", "Роман"];

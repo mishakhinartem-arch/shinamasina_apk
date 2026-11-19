@@ -398,3 +398,18 @@ div.kb-order{font-size:.92rem}
 .post .rel{margin-top:6px}
 .post.borrowed{outline:3px dashed #f59e0b}
 .svq-ctl{display:inline-flex;gap:4px;align-items:center}
+
+/* 19.11: следующая машина по записи на карточке поста + приёмка в одно нажатие */
+.post.has-next{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.18)}
+.post-next{margin-top:8px;padding:8px;border-radius:10px;background:#fff;border:2px solid #4f46e5;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.post-next .pnl{font-size:.8rem;font-weight:900;color:#4338ca;text-transform:uppercase}
+.post-next .pnw{font-weight:700}
+.post-next .btn{min-height:52px;font-size:1.1rem}
+/* 19.11: справочник поставщиков, «Расходует со склада» */
+.wsugg{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;margin-top:4px;background:#fff;max-height:220px;overflow:auto}
+.wsugg button{border:0;border-bottom:1px solid var(--border);background:#fff;text-align:left;padding:10px 12px;font:inherit;cursor:pointer}
+.wsugg button:last-child{border-bottom:0}
+.wsugg button:hover{background:#eef2ff}
+.uses-row{display:grid;grid-template-columns:1fr 170px 44px;gap:6px;align-items:center;margin-top:6px}
+.uses-row .row{flex-wrap:nowrap;align-items:center}.uses-row .row .inp{width:110px;flex:0 0 110px}
+.nonorm{color:#b45309;font-weight:800}

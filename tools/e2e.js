@@ -268,7 +268,19 @@ function ok(c, m) { if (!c) throw new Error("ПРОВАЛ: " + m); log("OK", m);
   ok(await p.locator(".post").count() === 3 && await p.locator(".post.bk").count() === 2 && await p.locator(".post.live").count() === 1, "п.3 три поста: 2 под запись, 1 под живую очередь");
   ok(await p.locator(".list-item .chip").count() > 0, "п.3 у каждого талона примерное ожидание");
   await shot("tablet-40-queue-posts");
-  await click('[data-act="qNext"]'); ok(await p.locator(".modal >> text=пост 3").count() > 0, "п.3 «Следующий» отправляет на пост 3"); await closeModal();
+  // 19.11 v5: «Следующий» — машина на пост и сразу открытый заказ (приёмка в одно нажатие, без шага «Вызваны — принять машину»)
+  await click('[data-act="qNext"]'); await p.waitForTimeout(200);
+  st = await S(); { const o = st.orders.find((x) => x.id === st.ui.activeOrderId); const q = o && st.queue.items.find((x) => x.no === o.queueNo && x.status === "called"); ok(o && o.status === "new" && q && q.post === 3, "п.3 / v5 «Следующий» ставит на пост 3 и сразу открывает заказ"); }
+  await shot("tablet-74-next-opens-order");
+  // 19.11 v5: следующая машина по записи подсвечена на карточке поста записи, «Принять №…» — сразу заказ
+  await p.evaluate(() => { const S = SM.load(); if (!SM.live.freePosts(S, "booking").length) SM.live.release(S, 2); const t = new Date(SM.now() + 20 * 60e3); S.bookings.push({ id: "bk_e2e", ts: SM.now(), date: SM.dayKey(SM.now()), time: SM.pad(t.getHours()) + ":" + SM.pad(t.getMinutes()), direction: "full", name: "Запись E2E", phone: "79009998877", plate: "О777ОО77", comment: "", status: "new", orderId: null, clientId: null }); SM.save(); SM.ui.go("queue"); });
+  await p.waitForTimeout(200);
+  ok(await p.locator('.post.bk.has-next .post-next:has-text("Запись E2E")').count() >= 1, "v5 следующая машина по записи подсвечена на карточке поста записи (госномер, время, имя)");
+  ok(await p.locator('.post-next [data-act="bAcceptPost"]:has-text("Принять № О777ОО77")').count() === 1, "v5 на свободном посту кнопка «Принять № О777ОО77»");
+  await shot("tablet-75-posts-next-booking");
+  await click('.post-next [data-act="bAcceptPost"]'); await p.waitForTimeout(200);
+  st = await S(); { const o = st.orders.find((x) => x.plate === "О777ОО77"); ok(o && o.post && st.ui.activeOrderId === o.id && st.bookings.find((x) => x.id === "bk_e2e").status === "accepted", "v5 «Принять №…» в одно нажатие: заказ открыт, машина на посту " + (o && o.post)); }
+  await shot("tablet-76-accept-one-tap");
   // п.4 принтер: IP + тестовая печать → честное сообщение
   await click('[data-v="admin"]'); await numpad("1234"); await click('[data-t="set"]');
   await p.fill('[data-s="printerIp"]', "192.168.1.50"); await p.locator('[data-s="printerIp"]').dispatchEvent("change"); await p.waitForTimeout(150);
@@ -293,6 +305,43 @@ function ok(c, m) { if (!c) throw new Error("ПРОВАЛ: " + m); log("OK", m);
   await click('[data-act="prodNew"]'); await p.fill('.modal [data-f="name"]', "Тестовый товар (демо)"); await p.fill('.modal [data-f="price"]', "500"); await p.fill('.modal [data-f="cost"]', "200"); await p.fill('.modal [data-f="qty"]', "2"); await p.fill('.modal [data-f="min"]', "1"); await click(".modal [data-save]");
   st = await S(); ok(st.products.some((x) => x.name === "Тестовый товар (демо)" && x.qty === 2 && x.cost === 200), "п.11 товар добавлен: продажа 500, закупка 200, остаток 2");
   await shot("tablet-44-admin-catalog-after");
+  // --- 19.11 v5: «Расходует со склада» в окне услуги ---
+  await click('[data-act="catGroup"][data-g="repair"]'); await click('[data-act="svcNew"]');
+  await p.fill('.modal [data-f="name"]', "ремонт заплатку r20 (тест)"); await p.fill('.modal [data-f="price"]', "1000");
+  ok(await p.locator('.modal [data-uses] >> text=Нет нормы списания').count() === 1, "v5 в окне новой услуги подсказка «Нет нормы списания»");
+  await p.locator(".modal [data-usearch]").pressSequentially("Заплатка R-2"); await p.waitForTimeout(150);
+  await click('.modal [data-usugg] button:has-text("Заплатка R-20")');
+  await p.locator(".modal [data-usearch]").pressSequentially("Клей для заплаток (тест)"); await p.waitForTimeout(150); await click(".modal [data-unew]");
+  ok(await p.locator('.modal [data-urows]:has-text("Заплатка R-20")').count() === 1 && await p.locator('.modal [data-urows]:has-text("новая позиция")').count() === 1, "v5 «Расходует со склада»: выбрана заплатка R-20 и заведена новая позиция");
+  await shot("tablet-70-service-uses");
+  await click(".modal [data-save]");
+  st = await S(); { const cs = st.prices.custom.find((c) => c.name === "ремонт заплатку r20 (тест)"); const ns = cs ? st.warehouse.norms.filter((n) => n.key === "c:" + cs.id) : []; const names = ns.map((n) => (st.warehouse.items.find((i) => i.id === n.itemId) || {}).name); ok(ns.length === 2 && names.indexOf("Заплатка R-20") >= 0 && names.indexOf("Клей для заплаток (тест)") >= 0 && ns.every((n) => n.perUnit === 1), "v5 своя услуга списывает со склада: Заплатка R-20 ×1 и новая позиция ×1"); }
+  ok(await p.locator('tr:has-text("ремонт заплатку r20 (тест)") .nonorm').count() === 0, "v5 после привязки подсказки «нет нормы списания» у услуги нет");
+  // --- 19.11 v5: склад ремонта в админке, «не задана» цена закупки ---
+  await click('[data-t="wh"]');
+  ok(await p.locator("text=укажите цену закупки").count() > 0 && await p.locator('tr:has-text("Ножка грибка №9")').count() > 0 && await p.locator('tr:has-text("Заплатка R-25")').count() > 0, "v5 склад ремонта: заплатки/грибки/ножка в админке, подсказка «укажите цену закупки»");
+  ok(await p.locator('tr:has-text("Вулканизация")').count() === 0 && await p.locator('tr:has-text("Правка дисков") input[data-wc]').count() === 0, "v5 вулканизации и правки дисков на складе нет");
+  await shot("tablet-71-admin-wh-repair");
+  // --- 19.11 v5: справочник поставщиков в приходе ---
+  const bal0 = (await S()).drawer.balance;
+  await click('[data-v="warehouse"]'); await click('[data-act="wIn"]'); await p.waitForTimeout(150); if (!(await p.locator(".modal [data-sup]").count())) { await numpad("1234"); await p.waitForTimeout(150); }
+  await p.locator(".modal [data-sup]").pressSequentially("шин"); await p.waitForTimeout(150);
+  ok(await p.locator('.modal [data-sugg] button:has-text("Шинснаб")').count() === 1, "v5 поставщик ищется по первым буквам («шин» → ООО «Шинснаб»)");
+  await shot("tablet-72-supplier-suggest");
+  await click('.modal [data-sugg] button:has-text("Шинснаб")');
+  ok(await p.locator('.modal [data-pay][value="cashless"]').isChecked(), "v5 выбор поставщика подставил способ оплаты (безнал)");
+  await p.fill(".modal [data-inn]", "7701234567"); await p.fill(".modal [data-num]", "E2E-1");
+  await p.selectOption(".modal [data-line] >> nth=0 >> [data-i]", { label: "Заплатка R-20 (шт)" }); await p.fill(".modal [data-line] >> nth=0 >> [data-q]", "20"); await p.fill(".modal [data-line] >> nth=0 >> [data-p]", "0");
+  await click(".modal [data-ok]");
+  st = await S(); { const d = st.warehouse.docs[st.warehouse.docs.length - 1]; const sp = st.warehouse.suppliers.find((x) => x.id === d.supplierId); ok(d.number === "E2E-1" && sp && sp.inn === "7701234567" && d.pay === "cashless" && st.drawer.balance === bal0, "v5 приход: поставщик из справочника, ИНН сохранён, безнал отмечен, касса не изменилась"); }
+  await click('[data-act="wIn"]'); await p.waitForTimeout(150); if (!(await p.locator(".modal [data-sup]").count())) { await numpad("1234"); await p.waitForTimeout(150); }
+  await p.locator(".modal [data-sup]").pressSequentially("Колёсный двор (тест)"); await p.fill(".modal [data-inn]", "500100732259"); await p.fill(".modal [data-sphone]", "+7 900 123-45-67"); await click('.modal [data-pay][value="cash"]');
+  await p.selectOption(".modal [data-line] >> nth=0 >> [data-i]", { label: "Заплатка R-15 (шт)" }); await p.fill(".modal [data-line] >> nth=0 >> [data-q]", "10");
+  await shot("tablet-73-supplier-new");
+  await click(".modal [data-ok]");
+  st = await S(); { const sp = st.warehouse.suppliers.find((x) => x.name === "Колёсный двор (тест)"); const d = st.warehouse.docs[st.warehouse.docs.length - 1]; ok(sp && sp.inn === "500100732259" && sp.phone === "79001234567" && sp.pay === "cash" && d.pay === "cash" && st.drawer.balance === bal0, "v5 новый поставщик заведён из прихода (ИНН, телефон, наличные — только отметка, из кассы не вычтено)"); }
+  await click('[data-act="wIn"]'); await p.waitForTimeout(150); if (!(await p.locator(".modal [data-sup]").count())) { await numpad("1234"); await p.waitForTimeout(150); } await p.locator(".modal [data-sup]").pressSequentially("кол"); await p.waitForTimeout(150);
+  ok(await p.locator('.modal [data-sugg] button:has-text("Колёсный двор (тест)")').count() === 1, "v5 в следующий раз новый поставщик ищется по первым буквам"); await closeModal();
   await click('[data-v="kassa"]'); await click('[data-act="tab"][data-t="small"]');
   ok(await p.locator('.tile:has-text("Мойка колёс (тест)")').count() === 1 && await p.locator('.tile:has-text("Подкачка")').count() === 0, "п.11 на кассе: новая услуга видна, скрытая — нет");
   await click('[data-act="tab"][data-t="tire"]'); await click('[data-act="type"][data-t="gazel"]');

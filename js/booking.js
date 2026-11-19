@@ -51,19 +51,55 @@
   };
   B.needsStorage = (S, b) => SM.storage.activeForClient(S, b.clientId, b.plate).length > 0;
   B.forDay = (S, dayKey) => S.bookings.filter((b) => b.date === dayKey && b.status !== "cancel").sort((a, b) => a.time.localeCompare(b.time));
-  /** «Принять машину» по записи — создаёт заказ. */
-  B.accept = function (S, b, who) {
+  /**
+   * Услуга прайса для вида записи (подставляется в заказ при приёмке в одно нажатие). Соответствие по описанию комплектов
+   * в прайсе (SM.prices.KITS): полный шиномонтаж = «Переобувка 4 колеса», на дисках = «Комплекс без смены резины»
+   * (снятие/установка + балансировка), снять/поставить = «Снятие и установка 4-х колёс». Цена — только из прайса.
+   */
+  B.SERVICE_FOR = { full: "r:Переобувка 4 колеса", wheels: "r:Комплекс без смены резины", mount: "r:Снятие и установка 4-х колёс" };
+  /** Ближайшие записи на сегодня, которые ещё не приняты (опоздавшие до 60 мин тоже показываем). */
+  B.upcoming = function (S, now) {
+    now = now || SM.now(); const dk = SM.dayKey(now);
+    return S.bookings.filter((b) => b.date === dk && b.status === "new" && SM.live.visitTs(b) >= now - 60 * 60e3).sort((a, b) => a.time.localeCompare(b.time));
+  };
+  /**
+   * Следующая машина по записи для карточек постов записи (правка 19.11, Артём: «на посту 1 / 2 должен подсвечиваться номер следующей машины»).
+   * Ближайшие записи по очереди раздаются постам записи: сначала свободным (по номеру), потом занятым. { номер поста: запись }.
+   */
+  B.nextForPosts = function (S, now) {
+    const up = B.upcoming(S, now), st = SM.live.postsState(S, now).filter((p) => p.kind === "booking");
+    const order = st.filter((p) => !p.occ).concat(st.filter((p) => p.occ));
+    const out = {}; order.forEach((p, i) => { if (up[i]) out[p.n] = up[i]; });
+    return out;
+  };
+  /**
+   * «Принять машину» по записи — создаёт заказ и сразу ставит на пост (opts.post — конкретный свободный пост, иначе первый свободный пост записи).
+   * Клиент, машина, радиус/тип и услуга из записи подставляются (услуга — только если в прайсе есть цена для этого радиуса и типа).
+   */
+  B.accept = function (S, b, who, opts) {
+    opts = opts || {};
+    if (!b || b.status !== "new") return { ok: false, msg: "Запись уже принята или отменена" };
     if (!b.plate && !b.phone) return { ok: false, msg: "В записи нет госномера" };
     // Один пост — одна машина: записавшийся встаёт на свободный пост записи (или любой свободный)
-    const post = SM.live.freePostFor(S, "booking");
+    let post = SM.live.freePostFor(S, "booking");
+    if (opts.post) { if (SM.live.freePosts(S).indexOf(opts.post) < 0) return { ok: false, msg: "Пост " + opts.post + " занят — на одном посту одна машина" }; post = opts.post; }
     if (!post) return { ok: false, msg: "Все посты заняты — дождитесь, пока освободится пост (на одном посту одна машина)" };
     let res;
     if (b.plate) res = SM.orders.create(S, { plate: b.plate, bookingId: b.id, note: "Онлайн-запись " + b.time + ": " + B.dirLabel(b.direction) }, who);
     else { const q = SM.queueAdd(S, "запись"); res = SM.orders.create(S, { queueNo: q.no, bookingId: b.id, note: "Онлайн-запись " + b.time }, who); }
     if (!res.ok) return res;
     if (!res.order.clientId && b.clientId) SM.orders.attachClient(S, res.order, SM.client(S, b.clientId), who);
-    b.status = "accepted"; b.orderId = res.order.id; b.post = post; res.order.post = post;
+    b.status = "accepted"; b.orderId = res.order.id; b.post = post; res.order.post = post; res.order.acceptedAt = SM.now();
     SM.orders.log(res.order, who, "Пост " + post + " (онлайн-запись)");
+    // Колесо машины клиента → радиус и тип; услуга из записи — в заказ
+    const c = res.order.clientId && SM.client(S, res.order.clientId);
+    const car = c && (SM.clients.car(c, res.order.carId) || SM.clients.cars(c)[0]);
+    res.ctx = { radius: car && car.wheel_size ? car.wheel_size : null, typeKey: car && car.typeKey ? car.typeKey : "passenger" };
+    const key = B.SERVICE_FOR[b.direction];
+    if (key && res.ctx.radius && !res.existed && !res.order.items.some((i) => i.key === key)) {
+      const tile = SM.prices.find(S.prices, key, res.ctx.typeKey, res.ctx.radius);
+      if (tile && tile.price > 0) { const a = SM.orders.addItem(S, res.order, tile, 1, res.ctx, who); res.serviceAdded = a && a.ok !== false ? tile.name : null; }
+    }
     return res;
   };
   /* Очередь с улицы — js/queue.js (нумерация талонов каждый день с 1). */

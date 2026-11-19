@@ -3,7 +3,7 @@
   const SM = root.SM;
   const KEY = "shinamashina_web_demo_v1";
   const listeners = [];
-  SM.STATE_VERSION = 4; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь; 4: несколько машин у клиента, история карточки, Газель 6 колёс (v3 мигрируется, старше — пересоздаются)
+  SM.STATE_VERSION = 5; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь; 4: несколько машин у клиента, история карточки, Газель 6 колёс; 5: позиции ремонта на складе и нормы, справочник поставщиков (v3/v4 мигрируются, старше — пересоздаются)
   SM.DEFAULT_SETTINGS = {
     pin: "1234",
     discountMaxPct: 15,          // 0 = без ограничений
@@ -67,7 +67,7 @@
       bookings: [],
       payroll: { adjustments: [], payments: [] },
       expenses: { recurring: [], oneoff: [], categories: ["Аренда", "Коммуналка", "Расходники", "Хозяйство", "Реклама", "Связь", "Прочее"] },
-      warehouse: { items: [], norms: [], moves: [], docs: [] },
+      warehouse: { items: [], norms: [], moves: [], docs: [], suppliers: [] },
       ui: { operator: null, radius: "R16", type: "passenger", activeOrderId: null }
     };
   };
@@ -77,7 +77,7 @@
     if (typeof localStorage === "undefined") { cache = SM.emptyState(); return cache; }
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) { let st = JSON.parse(raw); if (st.version === 3 && SM.clients) st = SM.clients.migrateV3(st); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); return cache; } }
+      if (raw) { let st = JSON.parse(raw); const v0 = st.version; if (st.version === 3 && SM.clients) st = SM.clients.migrateV3(st); if (st.version === 4 && SM.warehouse) st = SM.warehouse.migrateRepairStock(st); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); if (v0 !== st.version) SM.save(); return cache; } }
     } catch (e) { console.warn("bad state", e); }
     cache = SM.seed ? SM.seed() : SM.emptyState();
     SM.save();

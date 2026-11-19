@@ -36,7 +36,13 @@
     if (!lines.length) return { ok: false, msg: "Добавьте хотя бы одну позицию с количеством" };
     const bad = lines.find((l) => W.isBox(W.item(S, l.itemId)) && !whole(Number(l.qty)));
     if (bad) return { ok: false, msg: W.item(S, bad.itemId).name + ": приход только целыми коробками" };
-    const d = { id: SM.uid("doc"), ts: doc.ts || SM.now(), supplier: doc.supplier || "", date: doc.date || SM.dayKey(SM.now()), number: doc.number || "", lines: [], total: 0 };
+    // Поставщик из справочника (или новый — заводится сразу). Способ оплаты — только отметка: из кассы/ящика ничего не вычитаем (решение Артёма 19.11 16:05).
+    let sup = null;
+    if (doc.supplierId) sup = W.supplier(S, doc.supplierId);
+    else if (doc.supplierData && String(doc.supplierData.name || "").trim()) { const r = W.saveSupplier(S, doc.supplierData); if (!r.ok) return r; sup = r.supplier; }
+    const pay = doc.pay || (sup ? sup.pay : "") || "";
+    if (pay && !W.PAY_RU[pay]) return { ok: false, msg: "Способ оплаты: наличные или безнал" };
+    const d = { id: SM.uid("doc"), ts: doc.ts || SM.now(), supplier: sup ? sup.name : doc.supplier || "", supplierId: sup ? sup.id : null, pay, date: doc.date || SM.dayKey(SM.now()), number: doc.number || "", lines: [], total: 0 };
     lines.forEach((l) => {
       const it = W.item(S, l.itemId); const q = Number(l.qty), price = Number(l.price || it.cost);
       const oldQ = Math.max(0, it.qty);
@@ -84,5 +90,110 @@
     let s = 0; S.warehouse.moves.forEach((m) => { if (m.ts >= from && m.ts < to && m.qty < 0 && m.type !== "in") s += -m.qty * m.cost; });
     return SM.round2(s);
   };
+  /** Позиции, у которых не задана цена закупки (0 = «не задана», не выдумываем) — подсказка в админке. */
+  W.costUnset = (S) => S.warehouse.items.filter((i) => !(Number(i.cost) > 0));
+
+  /* ---------- Справочник поставщиков (правка 19.11): название, ИНН, телефон, способ оплаты нал/безнал ---------- */
+  W.PAY_RU = { cash: "Наличные", cashless: "Безнал" };
+  /** Список поставщиков; у старых данных справочник собирается из названий в прошлых накладных (без ИНН и телефона). */
+  W.suppliers = function (S) {
+    const wh = S.warehouse;
+    if (!Array.isArray(wh.suppliers)) {
+      wh.suppliers = [];
+      (wh.docs || []).forEach((d) => { const n = String(d.supplier || "").trim(); if (n && !wh.suppliers.some((x) => W.normName(x.name) === W.normName(n))) wh.suppliers.push({ id: SM.uid("sp"), name: n, inn: "", phone: "", pay: "", createdAt: d.ts || SM.now() }); });
+    }
+    return wh.suppliers;
+  };
+  W.supplier = (S, id) => W.suppliers(S).find((x) => x.id === id) || null;
+  /** Поиск по первым буквам: название (любое слово, без кавычек и ООО/ИП), ИНН или телефон с начала. */
+  W.findSuppliers = function (S, q) {
+    const t = String(q || "").trim().toLowerCase().replace(/ё/g, "е"); if (!t) return W.suppliers(S).slice();
+    const onlyNum = /^[\d\s()+-]+$/.test(t), digits = t.replace(/\D/g, "");
+    return W.suppliers(S).filter((s) => {
+      if (onlyNum) return digits.length >= 2 && ((s.inn || "").startsWith(digits) || String(s.phone || "").replace(/^7/, "").startsWith(digits.replace(/^[78]/, "")) || s.name.replace(/\D/g, "").startsWith(digits));
+      const name = s.name.toLowerCase().replace(/ё/g, "е");
+      const words = name.replace(/[«»"'()]/g, " ").split(/\s+/).filter(Boolean);
+      return name.startsWith(t) || words.some((w) => w.startsWith(t));
+    }).sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  };
+  /** Добавить / изменить поставщика. ИНН — 10 цифр (организация) или 12 (ИП), можно пусто. Повтор по ИНН или названию — тот же поставщик. */
+  W.saveSupplier = function (S, d) {
+    const list = W.suppliers(S);
+    const name = String(d.name || "").trim(); if (!name) return { ok: false, msg: "Укажите название поставщика" };
+    const inn = String(d.inn || "").replace(/\D/g, "");
+    if (inn && inn.length !== 10 && inn.length !== 12) return { ok: false, msg: "ИНН — 10 цифр (организация) или 12 цифр (ИП)" };
+    const phone = SM.phoneVal(d.phone) ? SM.normPhone(d.phone) : "";
+    if (phone && phone.length !== 11) return { ok: false, msg: "Телефон поставщика — полностью, 11 цифр" };
+    const pay = d.pay || "";
+    if (pay && !W.PAY_RU[pay]) return { ok: false, msg: "Способ оплаты: наличные или безнал" };
+    let s = d.id ? list.find((x) => x.id === d.id) : null;
+    if (!s) s = (inn && list.find((x) => x.inn === inn)) || list.find((x) => W.normName(x.name) === W.normName(name)) || null;
+    if (s) { s.name = name; if (inn) s.inn = inn; if (phone) s.phone = phone; if (pay) s.pay = pay; return { ok: true, supplier: s, existed: true }; }
+    s = { id: SM.uid("sp"), name, inn, phone, pay, createdAt: SM.now() };
+    list.push(s);
+    return { ok: true, supplier: s, existed: false };
+  };
+
+  /* ---------- Склад ремонта (правка 19.11, решение Артёма 16:14): все позиции «Ремонт», кроме вулканизации, правки дисков и ремонта камеры ---------- */
+  W.REPAIR_SKIP = ["Ремонт камеры", "Вулканизация бескамерной", "Правка дисков"];
+  /** Услуги ремонта, которые расходуют уже заведённый материал с другим названием. */
+  W.REPAIR_EXTRA_NORMS = [["f:Ремонт жгутом", "Жгут ремонтный"], ["f:Ремонт грибком", "Грибок №7"]];
+  /** Нормализация названия: регистр, ё/е, пробелы, дефисы/тире (R20 = R-20 = R–20). */
+  W.normName = (n) => String(n || "").toLowerCase().replace(/ё/g, "е").replace(/[\s\-‐‑‒–—―]/g, "");
+  W.findItem = (S, name) => S.warehouse.items.find((i) => W.normName(i.name) === W.normName(name)) || null;
+  /**
+   * Добавить недостающие позиции ремонта и нормы «1 шт на услугу». Идемпотентно: существующие id, названия, закупку, остаток и минимум
+   * не трогаем; норму добавляем, только если у услуги ещё нет ни одной нормы. Новые позиции: закупка 0 («не задана»), минимум 5.
+   * Свои услуги (ключи c:…) не трогаем.
+   */
+  W.ensureRepairStock = function (S) {
+    const wh = S.warehouse; const added = [], norms = [];
+    const items = ((S.prices && S.prices.repair && S.prices.repair.items) || (root.PRICES && root.PRICES.repair.items) || []).map((x) => x.name);
+    const want = items.filter((n) => W.REPAIR_SKIP.indexOf(n) < 0).map((n) => ["f:" + n, n.replace(/[‐‑‒–—―]/g, "-")]).concat(W.REPAIR_EXTRA_NORMS);
+    want.forEach(([key, itemName]) => {
+      let it = W.findItem(S, itemName);
+      if (!it) { it = { id: SM.uid("w"), name: itemName, unit: "шт", cost: 0, min: 5, qty: 0, box: false }; wh.items.push(it); added.push(itemName); }
+      if (!wh.norms.some((n) => n.key === key)) { wh.norms.push({ id: SM.uid("nm"), key, itemId: it.id, perUnit: 1 }); norms.push(key); }
+    });
+    return { added, norms };
+  };
+  /** Миграция состояния v4 → v5: склад ремонта + справочник поставщиков. */
+  W.migrateRepairStock = function (st) {
+    st.warehouse = st.warehouse || { items: [], norms: [], moves: [], docs: [] };
+    ["items", "norms", "moves", "docs"].forEach((k) => { if (!Array.isArray(st.warehouse[k])) st.warehouse[k] = []; });
+    const r = W.ensureRepairStock(st); W.suppliers(st);
+    st.version = 5;
+    return st;
+  };
+
+  /* ---------- «Расходует со склада» в окне услуги (правка 19.11, Артём «Да» 16:10) ---------- */
+  /** Нормы услуги с позициями склада: [{ id, itemId, name, unit, perUnit }]. */
+  W.serviceUses = (S, key) => W.normsFor(S, key).map((n) => { const it = W.item(S, n.itemId); return { id: n.id, itemId: n.itemId, name: it ? it.name : "?", unit: it ? it.unit : "", perUnit: n.perUnit }; });
+  /**
+   * Заменить нормы услуги списком [{ itemId | newItem: { name, unit }, perUnit }]. Новые позиции заводятся сразу (закупка 0 — «не задана»).
+   * Коробочные позиции (грузики) не допускаются. Пустой список — убрать все нормы услуги.
+   */
+  W.setServiceUses = function (S, key, uses) {
+    if (!key) return { ok: false, msg: "Нет услуги" };
+    const prepared = [];
+    for (const u of uses || []) {
+      const q = Number(String(u.perUnit).replace(",", "."));
+      if (!(q > 0)) return { ok: false, msg: "Количество на 1 услугу должно быть больше 0" };
+      let it = u.itemId ? W.item(S, u.itemId) : null;
+      if (!it && u.newItem) {
+        const n = String(u.newItem.name || "").trim(); if (!n) return { ok: false, msg: "Название новой позиции склада?" };
+        it = W.findItem(S, n);
+        if (!it) { it = { id: SM.uid("w"), name: n, unit: u.newItem.unit || "шт", cost: 0, min: Number(u.newItem.min) || 0, qty: 0, box: false }; S.warehouse.items.push(it); }
+      }
+      if (!it) return { ok: false, msg: "Выберите позицию склада" };
+      if (W.isBox(it)) return { ok: false, msg: "Грузики учитываются только коробками — нормы на услугу для них не задаются" };
+      const ex = prepared.find((p) => p.itemId === it.id); if (ex) ex.perUnit = q; else prepared.push({ itemId: it.id, perUnit: q });
+    }
+    S.warehouse.norms = S.warehouse.norms.filter((n) => n.key !== key);
+    prepared.forEach((p) => S.warehouse.norms.push({ id: SM.uid("nm"), key, itemId: p.itemId, perUnit: p.perUnit }));
+    return { ok: true, count: prepared.length };
+  };
+  /** Свои услуги (c:…) без нормы списания — подсказка владельцу «нет нормы списания». */
+  W.servicesWithoutNorm = (S) => ((S.prices && S.prices.custom) || []).filter((c) => !W.normsFor(S, "c:" + c.id).length);
   W.fmtQty = (q, unit) => { const v = Math.round(q * 100) / 100; const [i, f] = String(Math.abs(v)).split("."); return (v < 0 ? "−" : "") + i.replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0") + (f ? "," + f : "") + " " + unit; };
 })(typeof window !== "undefined" ? window : globalThis);

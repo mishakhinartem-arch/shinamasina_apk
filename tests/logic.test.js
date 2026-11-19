@@ -171,7 +171,8 @@ test("Демо-данные: ~2 месяца чеков, хранение про
   SM.clock.fixed = null; const S = SM.seed();
   assert.ok(S.receipts.length > 300); assert.ok(S.shifts.filter((s) => s.endedAt).length > 40);
   assert.ok(S.storage.some((r) => SM.storage.status(S, r) === "overdue")); assert.ok(S.storage.some((r) => SM.storage.status(S, r) === "soon"));
-  assert.equal(SM.warehouse.low(S).length, 2); assert.ok(SM.shift.current(S));
+  assert.equal(SM.warehouse.low(S).length, 2 + 13); // + 13 новых позиций склада ремонта (остаток 0 < минимум 5, решение 19.11)
+  assert.ok(SM.shift.current(S));
   assert.ok(S.clients.every((c) => c.phone.startsWith("790000000")));
 });
 
@@ -327,9 +328,10 @@ test("п.3 Три поста: запись на 2 поста, живая оче�
   assert.equal(mk(1).ok, true); assert.equal(mk(2).ok, true); assert.equal(mk(3).ok, false);
   // ожидание: 40 мин на машину, 1 пост очереди
   ["А111АА77", "В222ВВ77", "Е333ЕЕ77"].forEach((p) => L.take(S, p));
-  assert.equal(L.waitMin(S, 1), 0); assert.equal(L.waitMin(S, 3), 80);
+  // 19.11: моделируем все посты — 3 свободных поста и 3 машины → все «сразу» (раньше было 80 мин через один пост 3)
+  assert.equal(L.waitMin(S, 1), 0); assert.equal(L.waitMin(S, 3), 0);
   const n = SM.queueNext(S); assert.equal(n.no, 1); assert.equal(n.post, 3); assert.equal(n.status, "called");
-  assert.equal(L.waitMin(S, 3), 60); // 1 впереди + машина на посту ×½ → (1 + 0,5) × 40 = 60
+  assert.equal(L.waitMin(S, 3), 0); // №2 → пост 1, №3 → пост 2
   assert.equal(L.waitLabel(80), "≈ 1 ч 20 мин"); assert.equal(L.waitLabel(0), "сразу, подъезжайте");
   // заказ по талону закрывает талон при оплате
   SM.shift.open(S, ["a"], 0);
@@ -478,7 +480,7 @@ test("п.11 Товары: цена/закупка/остаток, в чек бе
 });
 test("Демо-данные v3: товары, покраска, живая очередь, напоминания создаются; RunFlat-надбавка в seed не сломана", () => {
   const S = SM.seed({ now: new Date(2026, 10, 19, 14, 0).getTime() });
-  assert.equal(S.version, 4);
+  assert.equal(S.version, 5);
   assert.ok(S.products.length >= 5); assert.equal(SM.paint.active(S).length, 2);
   assert.equal(SM.live.waiting(S).length, 2); assert.equal(SM.live.waiting(S)[0].no, 1);
   assert.ok(S.clients.some((c) => c.notify && c.notify.consent));
@@ -550,6 +552,7 @@ test("19.11 Онлайн-запись: только переобувка (3 ви
   assert.equal(mk("repair", 1).ok, false); S.settings.bookRepair = true; assert.equal(mk("repair", 2).ok, true);
   assert.equal(B.durMin(S, "full"), 40); assert.equal(B.durMin(S, "wheels"), 25); assert.equal(B.durMin(S, "mount"), 15);
   S.settings.durWheels = 30; assert.equal(B.durMin(S, "wheels"), 30);
+  S.settings.posts = 1; // один пост — время услуг впереди складывается
   const L = SM.live; L.take(S, "А111АА77", "wheels"); L.take(S, "В222ВВ77", "mount"); assert.equal(L.waitMin(S, 3), 45); // 30 + 15 на 1 пост
 });
 test("19.11 Посты: одна машина на пост; очередь берёт свободный пост записи, если до записи успеваем; «Готова» освобождает пост", () => {
@@ -583,4 +586,124 @@ test("19.11 Анкета на планшете: новый клиент; тот 
   assert.equal(r2.ok, true); assert.equal(r2.updated, true); assert.equal(r2.client.cars.length, 2); assert.equal(S.clients.length, 1);
   assert.ok(r2.client.history.some((h) => /Добавлена машина/.test(h.text) && h.who === "анкета на планшете"));
   assert.equal(SM.kioskSave(S, { name: "Чужой", phone: "79001110000", plate: "Р100РР50" }).ok, false);
+});
+
+// ---------- Пачка 19.11 (v5): ожидание по всем постам, склад ремонта, приёмка в одно нажатие, поставщики, «Расходует со склада» ----------
+test("19.11 v5 Ожидание: два свободных поста записи и 2 машины в очереди → «сразу», третьей ≈ 40 мин (было 80)", () => {
+  const S = fresh(); const L = SM.live; SM.shift.open(S, ["a"], 0);
+  ["А111АА77", "В222ВВ77", "Е333ЕЕ77", "К444КК77"].forEach((p) => L.take(S, p));
+  assert.equal(L.next(S).post, 3); // №1 на посту 3 (40 мин)
+  assert.equal(L.waitMin(S, 2), 0); assert.equal(L.waitMin(S, 3), 0); // посты 1 и 2 свободны, записей нет
+  assert.equal(L.waitMin(S, 4), 40); // все три поста заняты → самый ранний освободится через 40 мин
+  assert.equal(L.waitLabel(L.waitMin(S, 2)), "сразу, подъезжайте");
+  // запись через 10 мин на 40 мин: машина из очереди не успеет до неё на посту записи — окно учитывается
+  const S2 = fresh(); SM.shift.open(S2, ["a"], 0);
+  ["А111АА77", "В222ВВ77"].forEach((p) => L.take(S2, p)); L.next(S2); // №1 → пост 3
+  S2.bookings.push({ id: "b1", date: SM.dayKey(T0), time: "09:10", status: "new", direction: "full", name: "З", phone: "79003330000", plate: "М555ММ50" });
+  assert.equal(L.waitMin(S2, 2), 0); // пост 2 свободен: запись в 09:10 уйдёт на пост 1, на посту 2 начинаем сразу
+  S2.bookings.push({ id: "b2", date: SM.dayKey(T0), time: "09:15", status: "new", direction: "full", name: "Ж", phone: "79004440000", plate: "Т666ТТ50" });
+  assert.equal(L.waitMin(S2, 2), 40); // обе записи заняли посты 1 и 2 → ждём пост 3 (09:40)
+});
+test("19.11 v5 Склад ремонта: все позиции «Ремонт», кроме вулканизации, правки дисков и ремонта камеры; 1 шт на услугу; закупка 0; идемпотентно", () => {
+  const S = fresh(); const W = SM.warehouse;
+  S.warehouse.items = [{ id: "w4", name: "Жгут ремонтный", unit: "шт", cost: 15, min: 30, qty: 50 }, { id: "w5", name: "Грибок №7", unit: "шт", cost: 90, min: 10, qty: 12 }, { id: "w10", name: "Заплатка UP-4.5", unit: "шт", cost: 45, min: 10, qty: 7 }];
+  S.warehouse.norms = [{ id: "n1", key: "f:Ремонт грибком", itemId: "w5", perUnit: 1 }, { id: "n2", key: "f:Заплатка UP–4.5", itemId: "w10", perUnit: 2 }];
+  SM.prices.addCustom(S.prices, { name: "ремонт заплатку r20", group: "repair", mode: "fixed", price: 1000 });
+  const r = W.ensureRepairStock(S);
+  assert.deepEqual(r.added, ["Заплатка R-8", "Заплатка R-10", "Заплатка R-11", "Заплатка R-12", "Заплатка R-13", "Заплатка R-14", "Заплатка R-15", "Заплатка R-18", "Заплатка R-20", "Заплатка R-25", "Грибок №4", "Грибок №9", "Ножка грибка №9"]);
+  ["Вулканизация", "Правка", "камеры"].forEach((x) => assert.ok(!S.warehouse.items.some((i) => i.name.indexOf(x) >= 0)));
+  const p20 = W.findItem(S, "Заплатка R20"); assert.ok(p20); assert.equal(p20.cost, 0); assert.equal(p20.min, 5); assert.equal(p20.qty, 0); assert.equal(W.findItem(S, "заплатка r–20"), p20);
+  assert.equal(W.normsFor(S, "f:Заплатка R-20")[0].perUnit, 1); assert.equal(W.normsFor(S, "f:Заплатка R-20")[0].itemId, p20.id);
+  // уже заведённое не дублируется и не перезаписывается
+  assert.equal(S.warehouse.items.filter((i) => /UP/.test(i.name)).length, 1); assert.equal(W.item(S, "w10").cost, 45); assert.equal(W.item(S, "w10").qty, 7);
+  assert.equal(W.normsFor(S, "f:Заплатка UP–4.5")[0].perUnit, 2); assert.equal(W.normsFor(S, "f:Ремонт грибком").length, 1);
+  assert.equal(W.normsFor(S, "f:Ремонт жгутом")[0].itemId, "w4");
+  assert.ok(!S.warehouse.norms.some((n) => n.key.startsWith("c:"))); // свои услуги не трогаем
+  assert.equal(W.costUnset(S).length, 13);
+  const n = S.warehouse.items.length, nn = S.warehouse.norms.length; const r2 = W.ensureRepairStock(S);
+  assert.equal(r2.added.length, 0); assert.equal(r2.norms.length, 0); assert.equal(S.warehouse.items.length, n); assert.equal(S.warehouse.norms.length, nn);
+  // оплата ремонта списывает 1 шт
+  SM.shift.open(S, ["a"], 0); const o = SM.orders.create(S, { plate: "А111АА77" }, "т").order;
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Заплатка R-20", "passenger", "R16"), 2, {}, "т"); SM.orders.pay(S, o, "card", "т");
+  assert.equal(p20.qty, -2);
+});
+test("19.11 v5 Миграция v4 → v5 при загрузке: склад ремонта добавляется, остатки и цены не меняются, версия 5", () => {
+  const mem = {}; globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => (mem[k] = String(v)), removeItem: (k) => delete mem[k] };
+  try {
+    SM.clock.fixed = T0; const st = SM.seed({ now: T0 });
+    st.version = 4; delete st.warehouse.suppliers;
+    st.warehouse.items = st.warehouse.items.filter((i) => !/R-|№4|№9/.test(i.name)); st.warehouse.norms = st.warehouse.norms.filter((nm) => SM.warehouse.item(st, nm.itemId));
+    const before = st.warehouse.items.map((i) => [i.id, i.qty, i.cost].join("|"));
+    mem[SM.STORE_KEY] = JSON.stringify(st);
+    const S = SM.reload();
+    assert.equal(S.version, 5); assert.equal(S.version, SM.STATE_VERSION);
+    assert.ok(SM.warehouse.findItem(S, "Ножка грибка №9")); assert.ok(SM.warehouse.findItem(S, "Заплатка R-25"));
+    assert.deepEqual(S.warehouse.items.slice(0, before.length).map((i) => [i.id, i.qty, i.cost].join("|")), before);
+    assert.ok(S.warehouse.suppliers.length >= 2); // справочник собран из прошлых накладных
+    assert.equal(JSON.parse(mem[SM.STORE_KEY]).version, 5);
+  } finally { delete globalThis.localStorage; SM.setState(null); }
+});
+test("19.11 v5 Поставщики: ИНН/телефон/нал-безнал, поиск по первым буквам, оплата только отметка — касса не меняется", () => {
+  const S = fresh(); const W = SM.warehouse; SM.shift.open(S, ["a"], 5000);
+  S.warehouse.items.push({ id: "w1", name: "Жгут ремонтный", unit: "шт", cost: 0, min: 5, qty: 0 });
+  assert.equal(W.saveSupplier(S, { name: "" }).ok, false);
+  assert.match(W.saveSupplier(S, { name: "ООО «Шинснаб»", inn: "123" }).msg, /ИНН/);
+  const a = W.saveSupplier(S, { name: "ООО «Шинснаб»", inn: "7701234567", phone: "+7 (900) 111-22-33", pay: "cashless" }); assert.equal(a.ok, true);
+  W.saveSupplier(S, { name: "ИП Расходников", inn: "500100732259", pay: "cash" });
+  assert.deepEqual(W.findSuppliers(S, "шин").map((x) => x.name), ["ООО «Шинснаб»"]); // по слову без «ООО»
+  assert.deepEqual(W.findSuppliers(S, "Ип р").map((x) => x.name), ["ИП Расходников"]);
+  assert.deepEqual(W.findSuppliers(S, "7701").map((x) => x.name), ["ООО «Шинснаб»"]); // по ИНН
+  assert.deepEqual(W.findSuppliers(S, "900 11").map((x) => x.name), ["ООО «Шинснаб»"]); // по телефону
+  const bal = S.drawer.balance, moves = S.drawer.moves.length;
+  const r = W.receive(S, { supplierId: a.supplier.id, pay: "cash", number: "15", lines: [{ itemId: "w1", qty: 100, price: 12 }] });
+  assert.equal(r.ok, true); assert.equal(r.doc.supplier, "ООО «Шинснаб»"); assert.equal(r.doc.supplierId, a.supplier.id); assert.equal(r.doc.pay, "cash"); assert.equal(r.doc.total, 1200);
+  assert.equal(S.drawer.balance, bal); assert.equal(S.drawer.moves.length, moves); // из кассы ничего не вычитается
+  // новый поставщик прямо из прихода; повтор по названию — тот же
+  const r2 = W.receive(S, { supplierData: { name: "Колёсный двор", phone: "+7", pay: "cashless" }, lines: [{ itemId: "w1", qty: 1, price: 12 }] });
+  assert.equal(r2.ok, true); assert.equal(r2.doc.pay, "cashless"); assert.equal(W.suppliers(S).length, 3);
+  W.receive(S, { supplierData: { name: "колёсный  двор" }, lines: [{ itemId: "w1", qty: 1, price: 12 }] }); assert.equal(W.suppliers(S).length, 3);
+  assert.equal(W.receive(S, { supplierData: { name: "Колёсный двор" }, pay: "card", lines: [{ itemId: "w1", qty: 1 }] }).ok, false);
+  // старые данные без справочника: собирается из накладных
+  const old = { warehouse: { items: [], norms: [], moves: [], docs: [{ supplier: "ИП Старый", ts: 1 }, { supplier: "ип старый", ts: 2 }] } };
+  assert.deepEqual(W.suppliers(old).map((x) => x.name), ["ИП Старый"]);
+});
+test("19.11 v5 Приёмка в одно нажатие: следующая по записи на постах 1/2, «Принять №…» и «Следующий» сразу открывают заказ", () => {
+  const S = fresh(); const B = SM.booking, L = SM.live; SM.shift.open(S, ["a"], 0); const dk = SM.dayKey(T0);
+  const c = SM.addClient(S, { name: "Олег", phone: "79005556677", plate: "М555ММ50", wheel_size: "R16", typeKey: "passenger" }).client;
+  S.bookings.push({ id: "b1", date: dk, time: "09:30", status: "new", direction: "full", name: "Олег", phone: "79005556677", plate: "М555ММ50", clientId: c.id });
+  S.bookings.push({ id: "b2", date: dk, time: "10:00", status: "new", direction: "mount", name: "Ира", phone: "79001112233", plate: "Т666ТТ50" });
+  S.bookings.push({ id: "b0", date: dk, time: "11:00", status: "cancel", direction: "full", name: "X", phone: "79001112200", plate: "Х000ХХ50" });
+  const nx = B.nextForPosts(S); assert.equal(nx[1].id, "b1"); assert.equal(nx[2].id, "b2"); assert.equal(nx[3], undefined);
+  // «Принять № М555ММ50» на посту 1: заказ открыт, пост 1, клиент, услуга из записи по прайсу (R16 легковая)
+  const r = B.accept(S, S.bookings[0], "т", { post: 1 }); assert.equal(r.ok, true); assert.equal(r.order.post, 1); assert.equal(r.order.clientId, c.id);
+  assert.equal(r.serviceAdded, "Переобувка 4 колеса"); assert.equal(r.order.items[0].price, PRICES.passenger.services["Переобувка 4 колеса"][3]); assert.equal(r.ctx.radius, "R16");
+  assert.equal(B.accept(S, S.bookings[0], "т").ok, false); // повторно не принять
+  assert.equal(B.accept(S, S.bookings[1], "т", { post: 1 }).ok, false); // пост 1 занят
+  assert.equal(B.nextForPosts(S)[2].id, "b2"); // свободный пост 2 → следующая запись
+  const r2 = B.accept(S, S.bookings[1], "т", { post: 2 }); assert.equal(r2.ok, true); assert.equal(r2.serviceAdded == null, true); // радиус неизвестен — услугу не подставляем
+  // живая очередь: «Следующий» → пост + заказ сразу
+  L.take(S, "А111АА77"); L.take(S, "В222ВВ77");
+  const q = L.acceptNext(S, "т"); assert.equal(q.ok, true); assert.equal(q.post, 3); assert.equal(q.ticket.status, "called"); assert.equal(q.order.plate, "А111АА77"); assert.equal(q.order.queueNo, 1);
+  assert.equal(SM.orders.open(S).filter((o) => o.queueNo === 1).length, 1);
+  const q2 = L.acceptNext(S, "т"); assert.equal(q2.ok, false); assert.match(q2.msg, /заняты/); assert.equal(L.find(S, 2).status, "wait"); // постов нет — талон ждёт, заказ не создан
+  assert.equal(L.accept(S, L.find(S, 1), "т").order.id, q.order.id); // повторно — тот же заказ
+});
+test("19.11 v5 «Расходует со склада»: своя услуга «ремонт заплатку r20» списывает заплатку; новая позиция из окна услуги; грузики нельзя", () => {
+  const S = fresh(); const W = SM.warehouse; W.ensureRepairStock(S);
+  S.warehouse.items.push({ id: "box1", name: "Грузики (коробка)", unit: "кор", cost: 100, min: 1, qty: 3, box: true });
+  const add = SM.prices.addCustom(S.prices, { name: "ремонт заплатку r20", group: "repair", mode: "fixed", price: 1000 }); assert.equal(add.ok, true);
+  assert.deepEqual(W.servicesWithoutNorm(S).map((x) => x.name), ["ремонт заплатку r20"]);
+  const p20 = W.findItem(S, "Заплатка R-20");
+  assert.equal(W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 0 }]).ok, false);
+  assert.match(W.setServiceUses(S, add.key, [{ itemId: "box1", perUnit: 1 }]).msg, /коробками/);
+  assert.equal(W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 1 }, { newItem: { name: "Клей для заплаток" }, perUnit: "0,5" }]).ok, true);
+  const glue = W.findItem(S, "Клей для заплаток"); assert.equal(glue.cost, 0); assert.equal(glue.unit, "шт");
+  assert.deepEqual(W.serviceUses(S, add.key).map((u) => u.name + ":" + u.perUnit), ["Заплатка R-20:1", "Клей для заплаток:0.5"]);
+  assert.equal(W.servicesWithoutNorm(S).length, 0);
+  SM.shift.open(S, ["a"], 0); const o = SM.orders.create(S, { plate: "А111АА77" }, "т").order;
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, add.key, "passenger", "R16"), 2, {}, "т"); SM.orders.pay(S, o, "cash", "т");
+  assert.equal(p20.qty, -2); assert.equal(glue.qty, -1);
+  // пустой список убирает нормы, повторное сохранение не дублирует
+  W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 1 }]); W.setServiceUses(S, add.key, [{ itemId: p20.id, perUnit: 1 }]); assert.equal(W.normsFor(S, add.key).length, 1);
+  W.setServiceUses(S, add.key, []); assert.equal(W.normsFor(S, add.key).length, 0);
 });
