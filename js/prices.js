@@ -9,6 +9,18 @@
   P.REPAIR_EXTRAS = ["Ремонт грибком", "Ремонт жгутом", "Ремонт камеры", "Вулканизация бескамерной", "Правка дисков"];
   P.GIFT = { key: "gift", name: "Акция: пакеты в подарок", price: 0, gift: true };
   P.STARTER = ["r:Переобувка 4 колеса", "r:Комплекс без смены резины", "r:Итого за 1 колесо", "r:Балансировка", "r:Монтаж", "r:Демонтаж", "f:Ремонт жгутом", "f:Ремонт грибком", "f:Обработка герметиком"];
+  /** Газель — 6 колёс (сдвоенные задние): комплекты «… 4 колеса» на Газели называются «6 колёс». */
+  P.GAZEL_WHEELS = 6;
+  P.wheels = (typeKey) => (typeKey === "gazel" ? P.GAZEL_WHEELS : 4);
+  P.GAZEL_NAMES = { "Переобувка 4 колеса": "Переобувка 6 колёс", "Снятие и установка 4-х колёс": "Снятие и установка 6 колёс", "Комплекс без смены резины": "Комплекс без смены резины (6 колёс)" };
+  P.GAZEL_NOTES = { "Переобувка 4 колеса": "= 6 × «Итого за 1 колесо» (Газель — 6 колёс)", "Снятие и установка 4-х колёс": "6 колёс, без монтажа и балансировки", "Комплекс без смены резины": "снятие/установка + балансировка 6 колёс" };
+  /** Пересчёт «Переобувки» Газели на 6 колёс: 6 × «Итого за 1 колесо». Только если владелец ещё не менял старую цену 5 500 ₽. */
+  P.gazelKitFix = function (prices) {
+    const sec = prices.commercial; if (!sec) return false;
+    const i = sec.radii.indexOf("Газель"), kit = sec.services["Переобувка 4 колеса"], one = sec.services["Итого за 1 колесо"];
+    if (i < 0 || !kit || !one || kit[i] !== 5500 || !(one[i] > 0)) return false;
+    kit[i] = P.GAZEL_WHEELS * one[i]; return true;
+  };
   P.typeLabel = (k) => (P.TYPES.find((t) => t.key === k) || { label: k }).label;
   /**
    * Колонка прайса для типа авто и радиуса. «Коммерческий» — колонки R14C/R15C/R16C раздела commercial
@@ -50,7 +62,8 @@
     const order = prices.packageOrder || Object.keys(prices.passenger.services);
     order.forEach((svc) => {
       const price = P.radiusPrice(prices, typeKey, svc, radius);
-      out.push({ key: "r:" + svc, name: svc, price: price, radial: true, group: "tire", kind: P.KITS[svc] ? "kit" : "single", note: P.KITS[svc] || "", surchargeEligible: P.isSurcharge(prices, svc), unit: P.KITS[svc] ? "" : "шт" });
+      const gz = typeKey === "gazel" && P.GAZEL_NAMES[svc];
+      out.push({ key: "r:" + svc, name: gz ? P.GAZEL_NAMES[svc] : svc, price: price, radial: true, group: "tire", kind: P.KITS[svc] ? "kit" : "single", note: gz ? P.GAZEL_NOTES[svc] : P.KITS[svc] || "", wheels: P.KITS[svc] ? P.wheels(typeKey) : 1, surchargeEligible: P.isSurcharge(prices, svc), unit: P.KITS[svc] ? "" : "шт" });
     });
     (prices.repair.items || []).forEach((it) => out.push(flat(prices, it, "repair")));
     (prices.extras.items || []).forEach((it) => out.push(flat(prices, it, P.REPAIR_EXTRAS.indexOf(it.name) >= 0 ? "repair" : "small")));

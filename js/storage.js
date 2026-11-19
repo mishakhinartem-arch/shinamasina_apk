@@ -32,7 +32,7 @@
     const qty = Number(d.qty);
     if (!(qty > 0)) return { ok: false, msg: "Укажите количество шин" };
     if (!d.size) return { ok: false, msg: "Укажите размер" };
-    if (!d.plate && !d.phone && !d.clientId) return { ok: false, msg: "Нужен госномер или телефон клиента" };
+    if (!d.plate && !SM.phoneVal(d.phone) && !d.clientId) return { ok: false, msg: "Нужен госномер или телефон клиента" };
     const from = d.from || SM.now();
     const months = Number(d.months) || 0;
     const until = d.until || (months ? St.addMonths(from, months) : 0);
@@ -43,8 +43,8 @@
     if (d.priceOverride && Number(d.price) > 0) { price = Math.round(Number(d.price)); priceManual = !calc.ok || price !== calc.price; }
     else { if (!calc.ok) return calc; price = calc.price; }
     let client = d.clientId ? SM.client(S, d.clientId) : (d.plate && SM.clientByPlate(S, d.plate)) || (d.phone && SM.clientByPhone(S, d.phone));
-    if (!client && (d.phone || d.name)) { const r = SM.addClient(S, { name: d.name, phone: d.phone, plate: d.plate, wheel_size: d.radius || "" }); if (r.ok) client = r.client; }
-    const rec = { id: SM.uid("st"), no: "Х-" + String(++S.storageSeq).padStart(4, "0"), ts: d.ts || SM.now(), clientId: client ? client.id : null, name: d.name || (client && client.name) || "", phone: SM.normPhone(d.phone || (client && client.phone) || ""), plate: SM.normPlate(d.plate || (client && client.plate) || ""), car: d.car || "", qty, size: d.size, radius: calc.radius || d.radius || "", months: months || null, tariffText: calc.ok ? calc.text : "", priceManual, brand: d.brand || "", rims: !!d.rims, season: d.season || "", condition: d.condition || "", place: d.place || "", from, until, price, paid: false, payment: null, status: "stored", who: who || "" };
+    if (!client && (SM.phoneVal(d.phone) || d.name)) { const r = SM.addClient(S, { name: d.name, phone: SM.phoneVal(d.phone), plate: d.plate, car: d.car || "", wheel_size: d.radius || "" }); if (r.ok) client = r.client; }
+    const rec = { id: SM.uid("st"), no: "Х-" + String(++S.storageSeq).padStart(4, "0"), ts: d.ts || SM.now(), clientId: client ? client.id : null, name: d.name || (client && client.name) || "", phone: SM.normPhone(SM.phoneVal(d.phone) || (client && client.phone) || ""), plate: SM.normPlate(d.plate || (client && client.plate) || ""), car: d.car || "", qty, size: d.size, radius: calc.radius || d.radius || "", months: months || null, tariffText: calc.ok ? calc.text : "", priceManual, brand: d.brand || "", rims: !!d.rims, season: d.season || "", condition: d.condition || "", comment: String(d.comment || "").trim(), photoId: d.photoId || null, place: d.place || "", from, until, price, paid: false, payment: null, status: "stored", who: who || "" };
     S.storage.push(rec);
     if (d.payNow && price > 0) { const p = St.pay(S, rec, d.payNow); if (!p.ok) return Object.assign(p, { rec }); }
     return { ok: true, rec };

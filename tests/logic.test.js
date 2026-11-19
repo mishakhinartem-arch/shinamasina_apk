@@ -150,11 +150,11 @@ test("Хранение: статусы «истекает (14 дн.)» и «пр
   const mk = (d) => SM.storage.create(S, { plate: "Е" + (100 + d + 50) + "КХ77", phone: "7900000" + String(1000 + d + 50).slice(-4), qty: 4, size: "R16", place: "A", until: today + d * 864e5, price: 0 }).rec;
   assert.equal(SM.storage.status(S, mk(-1)), "overdue"); assert.equal(SM.storage.status(S, mk(14)), "soon"); assert.equal(SM.storage.status(S, mk(15)), "ok");
   const day = SM.dayKey(T0 + 864e5);
-  assert.equal(SM.booking.create(S, { name: "И", phone: "79000000011", direction: "tire", date: day, time: "10:00" }).ok, false); // без согласия
-  const b = SM.booking.create(S, { name: "И", phone: "79000000011", direction: "tire", date: day, time: "10:00", consent: true, plate: "Е149КХ77" });
+  assert.equal(SM.booking.create(S, { name: "И", phone: "79000000011", direction: "full", date: day, time: "10:00" }).ok, false); // без согласия
+  const b = SM.booking.create(S, { name: "И", phone: "79000000011", direction: "full", date: day, time: "10:00", consent: true, plate: "Е149КХ77" });
   assert.equal(b.ok, true); assert.equal(SM.booking.needsStorage(S, b.booking), true);
-  SM.booking.create(S, { name: "П", phone: "79000000012", direction: "tire", date: day, time: "10:00", consent: true });
-  assert.equal(SM.booking.create(S, { name: "Р", phone: "79000000013", direction: "tire", date: day, time: "10:00", consent: true }).ok, false); // слот на 2 машины занят
+  SM.booking.create(S, { name: "П", phone: "79000000012", direction: "full", date: day, time: "10:00", consent: true });
+  assert.equal(SM.booking.create(S, { name: "Р", phone: "79000000013", direction: "full", date: day, time: "10:00", consent: true }).ok, false); // слот на 2 машины занят
   const acc = SM.booking.accept(S, b.booking, "т"); assert.equal(acc.ok, true); assert.equal(acc.order.plate, "Е149КХ77");
 });
 test("Прайс Excel: выгрузка → правка → сравнение было/стало → применение; клавиатура номера", () => {
@@ -290,7 +290,7 @@ test("п.1 Коммерческий (R14C/R15C/R16C) и Газель (тольк
   const S = fresh(); const P = SM.prices;
   assert.equal(P.radiusPrice(S.prices, "commercial", "Переобувка 4 колеса", "R14"), 3900); // колонка R14C
   assert.equal(P.radiusPrice(S.prices, "commercial", "Балансировка", "R16"), 305);         // R16C
-  assert.equal(P.radiusPrice(S.prices, "gazel", "Переобувка 4 колеса", "R16"), 5500);      // Газель
+  assert.equal(P.radiusPrice(S.prices, "gazel", "Переобувка 4 колеса", "R16"), 6150);      // Газель = 6 колёс: 6 × 1025
   assert.equal(P.hasRadius(S.prices, "gazel", "R15"), false);
   assert.equal(P.hasRadius(S.prices, "commercial", "R17"), false);
   assert.equal(P.hasRadius(S.prices, "commercial", "R13"), false);
@@ -301,8 +301,8 @@ test("п.1 Коммерческий (R14C/R15C/R16C) и Газель (тольк
   SM.orders.addItem(S, o, P.find(S.prices, "r:Балансировка", "commercial", "R15"), 4, { radius: "R15", typeKey: "commercial" }, "т");
   assert.equal(o.items[0].typeKey, "gazel"); assert.equal(o.items[1].price, 270);
   const t = SM.cart.totals(o, S.settings);
-  assert.equal(t.surcharge, 1100); // 20% от 5500, балансировка без надбавки
-  assert.equal(t.total, 5500 + 1080 + 1100);
+  assert.equal(t.surcharge, 1230); // 20% от 6150, балансировка без надбавки
+  assert.equal(t.total, 6150 + 1080 + 1230);
 });
 test("п.2 Живая очередь: талон по госномеру с планшета, повтор номера — тот же талон, нумерация каждый день с №1, не в сезон — нет", () => {
   const S = fresh(); const L = SM.live;
@@ -323,7 +323,7 @@ test("п.3 Три поста: запись на 2 поста, живая оче�
   S.settings.slotCapacity = 3; S.settings.seasonMode = false; assert.equal(SM.booking.capacity(S), 3); assert.equal(L.posts(S).live, 3); S.settings.seasonMode = true;
   // слоты записи: 2 машины на слот, третья запись в тот же слот не проходит
   const day = SM.dayKey(T0 + 24 * H);
-  const mk = (n) => SM.booking.create(S, { consent: true, name: "К" + n, phone: "7900111000" + n, direction: "tire", date: day, time: "10:00", plate: "" });
+  const mk = (n) => SM.booking.create(S, { consent: true, name: "К" + n, phone: "7900111000" + n, direction: "full", date: day, time: "10:00", plate: "" });
   assert.equal(mk(1).ok, true); assert.equal(mk(2).ok, true); assert.equal(mk(3).ok, false);
   // ожидание: 40 мин на машину, 1 пост очереди
   ["А111АА77", "В222ВВ77", "Е333ЕЕ77"].forEach((p) => L.take(S, p));
@@ -385,8 +385,8 @@ test("п.10 Напоминания: за 24 ч и за 2 ч, только с с�
   const c2 = SM.addClient(S, { name: "Без согласия", phone: "79000000012", plate: "В222ВВ77" }).client; RM.setClient(S, c2, "sms", false);
   assert.equal(RM.setClient(S, c2, "pigeon", true).ok, false);
   const day = SM.dayKey(T0 + 48 * H); // 20.11 — визит в 12:00, запись сделана 18.11 09:00
-  const b1 = SM.booking.create(S, { consent: true, name: "Согласен", phone: "79000000011", plate: "А111АА77", direction: "tire", date: day, time: "12:00" }).booking;
-  const b2 = SM.booking.create(S, { consent: true, name: "Без согласия", phone: "79000000012", plate: "В222ВВ77", direction: "tire", date: day, time: "12:00" }).booking;
+  const b1 = SM.booking.create(S, { consent: true, name: "Согласен", phone: "79000000011", plate: "А111АА77", direction: "full", date: day, time: "12:00" }).booking;
+  const b2 = SM.booking.create(S, { consent: true, name: "Без согласия", phone: "79000000012", plate: "В222ВВ77", direction: "full", date: day, time: "12:00" }).booking;
   const visit = RM.visitTs(b1);
   assert.equal(RM.run(S, visit - 25 * H).length, 0); // рано
   let n = RM.run(S, visit - 24 * H);
@@ -400,6 +400,7 @@ test("п.10 Напоминания: за 24 ч и за 2 ч, только с с�
   assert.equal(S.reminders.log.length, 4);
   // запись сделана менее чем за 24 ч → «за 24 ч» не отправляется, «за 2 ч» — да
   SM.clock.fixed = visit - 5 * H;
+  S.settings.bookRepair = true; // запись на ремонт — галочка владельца (по умолчанию выключена)
   const b3 = SM.booking.create(S, { consent: true, name: "Поздно", phone: "79000000011", plate: "А111АА77", direction: "repair", date: day, time: "17:00", remind: { channel: "max", consent: true } }).booking;
   assert.equal(SM.client(S, b3.clientId).notify.channel, "max"); // канал из онлайн-записи
   n = RM.run(S, visit - 4 * H); const late = n.find((e) => e.bookingId === b3.id); assert.equal(late.status, "skip"); assert.match(late.reason, /позже/);
@@ -477,11 +478,109 @@ test("п.11 Товары: цена/закупка/остаток, в чек бе
 });
 test("Демо-данные v3: товары, покраска, живая очередь, напоминания создаются; RunFlat-надбавка в seed не сломана", () => {
   const S = SM.seed({ now: new Date(2026, 10, 19, 14, 0).getTime() });
-  assert.equal(S.version, 3);
+  assert.equal(S.version, 4);
   assert.ok(S.products.length >= 5); assert.equal(SM.paint.active(S).length, 2);
   assert.equal(SM.live.waiting(S).length, 2); assert.equal(SM.live.waiting(S)[0].no, 1);
   assert.ok(S.clients.some((c) => c.notify && c.notify.consent));
   assert.ok(S.receipts.some((r) => r.runflat && r.totals.surcharge > 0));
   assert.ok(S.receipts.some((r) => r.totals.goods > 0));
   SM.clock.fixed = null;
+});
+
+/* ===== Правки 19.11 (после публикации v2) ===== */
+test("19.11 Давление: цифры без точки → 22 → 2.2, 30 → 3.0, 245 → 2.45; проверка 1–6 бар", () => {
+  assert.equal(SM.pressureFromDigits("22"), "2.2"); assert.equal(SM.pressureFromDigits("30"), "3.0");
+  assert.equal(SM.pressureFromDigits("245"), "2.45"); assert.equal(SM.pressureFromDigits("2.2"), "2.2"); assert.equal(SM.pressureFromDigits(""), "");
+  assert.equal(SM.pressureValid("2.2"), true); assert.equal(SM.pressureValid(""), true); assert.equal(SM.pressureValid("0.5"), false); assert.equal(SM.pressureValid("7.0"), false);
+});
+test("19.11 Несколько машин у клиента: поиск по номеру — сразу машина, по телефону — все машины, визиты по машине, скидка общая", () => {
+  const S = fresh(); const CL = SM.clients;
+  const c = SM.addClient(S, { name: "Пётр", phone: "+7 900 111-22-33", cars: [{ plate: "А111АА77", car: "Kia Rio", wheel_size: "R15" }, { plate: "В222ВВ77", car: "Газель", wheel_size: "R16", typeKey: "gazel" }] }).client;
+  assert.equal(CL.cars(c).length, 2); assert.equal(c.plate, "А111АА77"); // основная машина — первая
+  const f = CL.findByPlate(S, "в222вв77"); assert.equal(f.client.id, c.id); assert.equal(f.car.car, "Газель");
+  const byPlate = CL.search(S, "В222ВВ77"); assert.equal(byPlate.length, 1); assert.equal(byPlate[0].car.plate, "В222ВВ77");
+  const byPhone = CL.search(S, "89001112233"); assert.equal(byPhone.length, 1); assert.equal(byPhone[0].client.id, c.id); assert.equal(byPhone[0].car, null); // по телефону — машину выбирают
+  SM.shift.open(S, ["a"], 0);
+  const o = SM.orders.create(S, { plate: "В222ВВ77" }, "т").order; assert.equal(o.clientId, c.id); assert.equal(o.carId, f.car.id);
+  SM.orders.addItem(S, o, SM.prices.find(S.prices, "f:Подкачка", "passenger", "R16"), 1, {}, "т"); SM.orders.pay(S, o, "card", "т");
+  assert.equal(CL.carVisits(S, c, f.car).length, 1); assert.equal(CL.carVisits(S, c, CL.cars(c)[0]).length, 0);
+  assert.equal(SM.clientVisits(S, c.id).length, 1); // скидка постоянному считается по всем машинам клиента
+});
+test("19.11 Карточка клиента: правка без PIN, история «было → стало», кто и когда; чужой номер/телефон не даём", () => {
+  const S = fresh(); const CL = SM.clients;
+  const c = SM.addClient(S, { name: "Анна", phone: "79001234567", plate: "Е555КХ77", car: "Solaris" }).client;
+  const d = SM.addClient(S, { name: "Борис", phone: "79007654321", plate: "О777ОО77" }).client;
+  const cars = CL.cars(c).map((x) => Object.assign({}, x));
+  cars[0].plate = "Е556КХ77"; cars[0].pFront = "2.3"; cars.push({ plate: "М100ММ50", car: "Lada" });
+  const r = CL.update(S, c, { name: "Анна С.", phone: "+7 900 123-45-67", cars }, "Мастер 1");
+  assert.equal(r.ok, true);
+  assert.ok(r.changes.some((t) => t === "Имя: Анна → Анна С.")); assert.ok(r.changes.some((t) => /Госномер: Е555КХ77 → Е556КХ77/.test(t)));
+  assert.ok(r.changes.some((t) => /Давление перед/.test(t))); assert.ok(r.changes.some((t) => /Добавлена машина/.test(t)));
+  assert.equal(c.history[c.history.length - 1].who, "Мастер 1"); assert.ok(c.history[0].ts > 0);
+  assert.equal(CL.findByPlate(S, "Е555КХ77"), null); assert.deepEqual(CL.cars(c)[0].prevPlates, ["Е555КХ77"]); // старый номер помним для истории визитов, но по нему не узнаём (номер мог перейти другому)
+  assert.equal(CL.update(S, c, { phone: d.phone }, "т").ok, false);
+  const cc = CL.cars(c).map((x) => Object.assign({}, x)); cc[0].plate = "О777ОО77"; assert.equal(CL.update(S, c, { cars: cc }, "т").ok, false);
+  const cp = CL.cars(c).map((x) => Object.assign({}, x)); cp[0].pRear = "9.9"; assert.equal(CL.update(S, c, { cars: cp }, "т").ok, false);
+  assert.ok(CL.changeLog(S).length >= 4); assert.equal(CL.changeLog(S)[0].client, "Анна С.");
+});
+test("19.11 Миграция v3 → v4: клиент с одной машиной получает список машин, Газель 5 500 → 6 × «за 1 колесо»", () => {
+  const S = fresh(); S.version = 3;
+  S.clients = [{ id: "c1", name: "Старый", phone: "79000000009", plate: "Х999ХХ99", car: "Ford", wheel_size: "R16", typeKey: "passenger" }];
+  const gi = S.prices.commercial.radii.indexOf("Газель"); S.prices.commercial.services["Переобувка 4 колеса"][gi] = 5500;
+  SM.clients.migrateV3(S);
+  assert.equal(S.version, 4); assert.equal(S.clients[0].cars.length, 1); assert.equal(S.clients[0].cars[0].plate, "Х999ХХ99");
+  assert.equal(S.prices.commercial.services["Переобувка 4 колеса"][gi], 6 * S.prices.commercial.services["Итого за 1 колесо"][gi]);
+  S.prices.commercial.services["Переобувка 4 колеса"][gi] = 7000; assert.equal(SM.prices.gazelKitFix(S.prices), false); // цену владельца не трогаем
+});
+test("19.11 Покраска дисков не в % мастеров и не в счётчике машин; состояние дисков в наряде", () => {
+  const S = fresh(); const PN = SM.paint;
+  assert.equal(PN.create(S, { plate: "А123ВС50", radius: "R17", disks: 4, color: "чёрный", paintPrice: 16000, diskCondition: ["без повреждений", "сколы краски"] }, "т").ok, false);
+  const r = PN.create(S, { plate: "А123ВС50", radius: "R17", disks: 4, color: "чёрный", paintPrice: 16000, straighten: { qty: 1, sum: 1500 }, diskCondition: ["сколы краски", "бордюрка (потёртости кромки)"] }, "т");
+  assert.equal(r.ok, true); assert.equal(PN.condText(r.order), "сколы краски, бордюрка (потёртости кромки)");
+  SM.shift.open(S, ["a"], 0); PN.setReady(S, r.order, "т"); const pay = PN.pay(S, r.order, "cash", "т");
+  assert.equal(SM.cart.paintAmount(pay.receipt), 16000); assert.equal(SM.cart.serviceAmount(pay.receipt), 1500); // в % — только правка
+  assert.equal(SM.shift.revenue(S, SM.shift.current(S).id).paint, 16000);
+  assert.equal(SM.orders.open(S).length, 0); // наряд покраски — не машина на посту
+});
+test("19.11 Онлайн-запись: только переобувка (3 вида с временем владельца), ремонт — если владелец включил", () => {
+  const S = fresh(); const B = SM.booking; const day = SM.dayKey(T0 + 24 * H);
+  assert.deepEqual(B.directions(S).map((d) => d.key), ["full", "wheels", "mount"]);
+  assert.equal(B.directions(S)[0].label, "Полный шиномонтаж"); assert.match(B.directions(S)[0].sub, /снять, перебортировать, отбалансировать, поставить/);
+  const mk = (dir, n) => B.create(S, { consent: true, name: "К", phone: "7900222000" + n, direction: dir, date: day, time: "11:00", plate: "" });
+  assert.equal(mk("repair", 1).ok, false); S.settings.bookRepair = true; assert.equal(mk("repair", 2).ok, true);
+  assert.equal(B.durMin(S, "full"), 40); assert.equal(B.durMin(S, "wheels"), 25); assert.equal(B.durMin(S, "mount"), 15);
+  S.settings.durWheels = 30; assert.equal(B.durMin(S, "wheels"), 30);
+  const L = SM.live; L.take(S, "А111АА77", "wheels"); L.take(S, "В222ВВ77", "mount"); assert.equal(L.waitMin(S, 3), 45); // 30 + 15 на 1 пост
+});
+test("19.11 Посты: одна машина на пост; очередь берёт свободный пост записи, если до записи успеваем; «Готова» освобождает пост", () => {
+  const S = fresh(); const L = SM.live; SM.shift.open(S, ["a"], 0);
+  ["А111АА77", "В222ВВ77", "Е333ЕЕ77", "К444КК77"].forEach((p) => L.take(S, p));
+  let n = L.next(S); assert.equal(n.ok, true); assert.equal(n.post, 3); assert.equal(n.borrowed, false);
+  n = L.next(S); assert.equal(n.post, 1); assert.equal(n.borrowed, true); // записей нет — пост записи 1 свободен
+  // запись на 09:20 — до окончания (40 мин) успеть нельзя: пост 2 держим под запись
+  S.bookings.push({ id: "b1", date: SM.dayKey(T0), time: "09:20", status: "new", direction: "full", name: "З", phone: "79003330000", plate: "М555ММ50" });
+  n = L.next(S); assert.equal(n.ok, false); assert.match(n.msg, /не успеем до записи/);
+  // записавшийся приехал: встаёт на пост 2; больше свободных постов нет
+  const acc = SM.booking.accept(S, S.bookings[0], "т"); assert.equal(acc.ok, true); assert.equal(acc.order.post, 2);
+  S.bookings.push({ id: "b2", date: SM.dayKey(T0), time: "09:30", status: "new", direction: "full", name: "Ж", phone: "79004440000", plate: "Т666ТТ50" });
+  assert.equal(SM.booking.accept(S, S.bookings[1], "т").ok, false); // все посты заняты
+  // машина с поста 3 готова (ждёт оплаты) → пост 3 свободен
+  const o = SM.orders.create(S, { plate: "А111АА77", queueNo: 1 }, "т").order; SM.orders.setStatus(S, o, "ready", "т");
+  assert.ok(L.freePosts(S).indexOf(3) >= 0); assert.match(o.history[o.history.length - 1].text, /Готова, ждёт оплаты/);
+  assert.equal(L.release(S, 1).ok, true); assert.ok(L.freePosts(S).indexOf(1) >= 0); assert.equal(L.release(S, 1).ok, false);
+});
+test("19.11 Газель: «Переобувка 6 колёс» 6 150 ₽ (6 × 1 025), названия «6 колёс»", () => {
+  const S = fresh();
+  const cat = SM.prices.catalogAll(S.prices, "gazel", "R16");
+  const kit = cat.find((t) => /Переобувка 6 колёс/.test(t.name)); assert.ok(kit); assert.equal(kit.price, 6150);
+  assert.ok(cat.some((t) => /Снятие и установка 6 колёс/.test(t.name)));
+});
+test("19.11 Анкета на планшете: новый клиент; тот же телефон — добавляем машину в карточку с историей; чужой номер — к администратору", () => {
+  const S = fresh();
+  const r1 = SM.kioskSave(S, { name: "Ольга", phone: "+7 900 555-66-77", plate: "Р100РР50", car: "Polo", wheel_size: "R15", pFront: "2.2", pRear: "2.4" });
+  assert.equal(r1.ok, true); assert.equal(r1.updated, false); assert.equal(r1.client.cars[0].pRear, "2.4"); assert.ok(r1.client.consent.at);
+  const r2 = SM.kioskSave(S, { name: "Ольга", phone: "89005556677", plate: "С200СС50", car: "Tiguan", wheel_size: "R17" });
+  assert.equal(r2.ok, true); assert.equal(r2.updated, true); assert.equal(r2.client.cars.length, 2); assert.equal(S.clients.length, 1);
+  assert.ok(r2.client.history.some((h) => /Добавлена машина/.test(h.text) && h.who === "анкета на планшете"));
+  assert.equal(SM.kioskSave(S, { name: "Чужой", phone: "79001110000", plate: "Р100РР50" }).ok, false);
 });

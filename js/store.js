@@ -3,7 +3,7 @@
   const SM = root.SM;
   const KEY = "shinamashina_web_demo_v1";
   const listeners = [];
-  SM.STATE_VERSION = 3; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь — старые демо-данные пересоздаются
+  SM.STATE_VERSION = 4; // 2: тариф хранения, грузики коробками; 3: товары, покраска, напоминания, живая очередь; 4: несколько машин у клиента, история карточки, Газель 6 колёс (v3 мигрируется, старше — пересоздаются)
   SM.DEFAULT_SETTINGS = {
     pin: "1234",
     discountMaxPct: 15,          // 0 = без ограничений
@@ -27,7 +27,12 @@
     seasonMode: true,
     posts: 3,
     bookingPosts: 2,
-    avgServiceMin: 40,           // среднее время на машину для расчёта ожидания, мин
+    avgServiceMin: 40,           // (старое поле) = «Полный шиномонтаж», оставлено для совместимости
+    // Среднее время (владелец меняет в админке), мин — для ожидания живой очереди и «успеем до записи»
+    durFull: 40,                 // Полный шиномонтаж (снять, перебортировать, отбалансировать, поставить)
+    durWheels: 25,               // Переобувка колёс на дисках (снять/поставить + балансировка)
+    durMount: 15,                // Снять/поставить
+    bookRepair: false,           // онлайн-запись на ремонт (по умолчанию — только переобувка)
     // Сетевой принтер талонов (ESC/POS по TCP; печатает только APK)
     printerIp: "",
     printerPort: 9100,
@@ -72,7 +77,7 @@
     if (typeof localStorage === "undefined") { cache = SM.emptyState(); return cache; }
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) { const st = JSON.parse(raw); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); return cache; } }
+      if (raw) { let st = JSON.parse(raw); if (st.version === 3 && SM.clients) st = SM.clients.migrateV3(st); if ((st.version || 1) >= SM.STATE_VERSION) { cache = st; cache.settings = Object.assign(JSON.parse(JSON.stringify(SM.DEFAULT_SETTINGS)), cache.settings || {}); return cache; } }
     } catch (e) { console.warn("bad state", e); }
     cache = SM.seed ? SM.seed() : SM.emptyState();
     SM.save();
@@ -85,7 +90,7 @@
   };
   SM.onSave = function (f) { listeners.push(f); };
   SM.reload = function () { cache = null; return SM.load(); };
-  SM.resetDemo = function () { if (typeof localStorage !== "undefined") localStorage.removeItem(KEY); cache = null; return SM.load(); };
+  SM.resetDemo = function () { if (typeof localStorage !== "undefined") localStorage.removeItem(KEY); if (SM.photos) SM.photos.clear(); cache = null; return SM.load(); };
   SM.setState = function (s) { cache = s; };
   SM.STORE_KEY = KEY;
   // Подхват изменений из других вкладок (book.html / client.html -> касса)
@@ -93,12 +98,18 @@
   SM.emp = function (S, id) { return S.employees.find((e) => e.id === id) || null; };
   SM.empName = function (S, id) { const e = SM.emp(S, id); return e ? e.name : "?"; };
   SM.client = function (S, id) { return S.clients.find((c) => c.id === id) || null; };
-  SM.clientByPlate = function (S, plate) { const p = SM.normPlate(plate); return p ? S.clients.find((c) => SM.normPlate(c.plate) === p) || null : null; };
+  /** Клиент по госномеру любой из его машин. */
+  SM.clientByPlate = function (S, plate) { const f = SM.clients.findByPlate(S, plate); return f ? f.client : null; };
   SM.clientByPhone = function (S, phone) { const p = SM.normPhone(phone); return p.length === 11 ? S.clients.find((c) => SM.normPhone(c.phone) === p) || null : null; };
+  /** Пустое поле телефона с «+7» — это «нет телефона». */
+  SM.phoneVal = function (raw) { return String(raw || "").replace(/\D/g, "").length <= 1 ? "" : String(raw); };
   SM.addClient = function (S, data) {
-    const dup = (data.phone && SM.clientByPhone(S, data.phone)) || (data.plate && SM.clientByPlate(S, data.plate));
+    const phone = SM.phoneVal(data.phone);
+    const dup = (phone && SM.clientByPhone(S, phone)) || (data.plate && SM.clientByPlate(S, data.plate));
     if (dup && !data.force) return { ok: false, dup: dup, msg: "Такой клиент уже есть: " + (dup.name || SM.phoneShow(dup.phone)) };
-    const c = { id: SM.uid("c"), name: (data.name || "").trim(), phone: SM.normPhone(data.phone), plate: SM.normPlate(data.plate), car: data.car || "", wheel_size: data.wheel_size || "", typeKey: data.typeKey || "", consent: data.consent || null, notify: data.notify || null, createdAt: SM.now(), source: data.source || "касса" };
+    const cars = data.cars ? data.cars.map(SM.clients.newCar) : data.plate || data.car || data.wheel_size ? [SM.clients.newCar({ plate: data.plate, car: data.car, wheel_size: data.wheel_size, typeKey: data.typeKey, pFront: data.pFront, pRear: data.pRear })] : [];
+    const c = { id: SM.uid("c"), name: (data.name || "").trim(), phone: SM.normPhone(phone), cars, plate: "", car: "", wheel_size: "", typeKey: "", consent: data.consent || null, notify: data.notify || null, createdAt: SM.now(), source: data.source || "касса", history: [] };
+    SM.clients.syncPrimary(c);
     S.clients.push(c);
     return { ok: true, client: c };
   };

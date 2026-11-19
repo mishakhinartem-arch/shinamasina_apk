@@ -31,7 +31,11 @@
     const L = SM.PLATE_LETTERS;
     const plate = () => L[Math.floor(rnd() * 12)] + String(100 + Math.floor(rnd() * 899)) + L[Math.floor(rnd() * 12)] + L[Math.floor(rnd() * 12)] + pick(["50", "750", "790", "77", "799", "190"]);
     names.forEach((n, i) => { const r = SM.addClient(S, { name: n + " (демо)", phone: "7900000" + "00" + String(i + 1).padStart(2, "0"), plate: i === 0 ? "А123ВС50" : plate(), car: pick(["Лада Веста", "Kia Rio", "Hyundai Creta", "Toyota RAV4", "VW Polo", "Skoda Octavia", "Haval Jolion"]), wheel_size: pick(["R15", "R16", "R16", "R17", "R18"]), typeKey: pick(["passenger", "passenger", "crossover", "jeep"]), consent: i % 3 ? { at: day0, source: "анкета" } : null }); r.client.createdAt = day0; });
-    S.clients[0].wheel_size = "R16"; S.clients[0].typeKey = "passenger";
+    // У Ивана (демо) две машины: один телефон — несколько машин; давление перед/зад у каждой
+    S.clients[0].cars[0].wheel_size = "R16"; S.clients[0].cars[0].typeKey = "passenger"; S.clients[0].cars[0].pFront = "2.2"; S.clients[0].cars[0].pRear = "2.2";
+    S.clients[0].cars.push(SM.clients.newCar({ plate: "Т321ОР50", car: "Газель Next", wheel_size: "R16", typeKey: "gazel", pFront: "3.0", pRear: "3.5" }));
+    S.clients[3].cars.push(SM.clients.newCar({ plate: "Н404КМ750", car: "Toyota Camry", wheel_size: "R17", typeKey: "passenger", pFront: "2.3", pRear: "2.3" }));
+    S.clients.forEach((c) => SM.clients.syncPrimary(c));
     // Напоминания о записи: у части клиентов выбран канал и есть согласие (вымышленные)
     S.clients.forEach((c, i) => { if (i % 4 !== 3) { SM.reminders.setClient(S, c, ["max", "telegram", "sms"][i % 3], i % 5 !== 4, "анкета"); if (c.notify.at) c.notify.at = day0; } });
     // Товары (вымышленные цены): продажа в чек со списанием
@@ -41,11 +45,12 @@
     function makeSale(ts, sh) {
       at(ts);
       const cl = rnd() < 0.55 ? pick(S.clients) : null;
-      const pl = cl ? cl.plate : rnd() < 0.85 ? plate() : null;
+      const car = cl ? pick(SM.clients.cars(cl)) : null;
+      const pl = car ? car.plate : rnd() < 0.85 ? plate() : null;
       const res = pl ? SM.orders.create(S, { plate: pl }, "Касса") : SM.orders.create(S, { queueNo: SM.queueAdd(S).no }, "Касса");
       const o = res.order;
-      const typeKey = cl && cl.typeKey ? cl.typeKey : wpick([["passenger", 7], ["crossover", 2], ["jeep", 1]]);
-      let radius = cl && cl.wheel_size ? cl.wheel_size : wpick([["R14", 1], ["R15", 3], ["R16", 4], ["R17", 3], ["R18", 2], ["R19", 1], ["R20", 0.5]]);
+      const typeKey = car && car.typeKey ? car.typeKey : wpick([["passenger", 7], ["crossover", 2], ["jeep", 1]]);
+      let radius = car && car.wheel_size ? car.wheel_size : wpick([["R14", 1], ["R15", 3], ["R16", 4], ["R17", 3], ["R18", 2], ["R19", 1], ["R20", 0.5]]);
       if (!SM.prices.hasRadius(S.prices, typeKey, radius)) radius = "R16";
       const k = wpick(SVC.map((s) => [s, s[1]]));
       const tile = SM.prices.find(S.prices, k[0], typeKey, radius);
@@ -145,11 +150,11 @@
     const tk = SM.dayKey(now), tm = SM.dayKey(now + 864e5);
     const freeSlots = SM.booking.slots(S, tk, now).filter((s) => !s.past);
     const mk = (date, time, dir, c, comment) => S.bookings.push({ id: SM.uid("bk"), ts: SM.now(), date, time, direction: dir, name: c.name, phone: c.phone, plate: c.plate, comment: comment || "", consentAt: SM.now(), clientId: c.id, status: "new", orderId: null });
-    if (freeSlots[0]) mk(tk, freeSlots[0].time, "tire", S.clients[5], "переобуть на зиму, шины у вас на хранении");
-    if (freeSlots[2]) mk(tk, freeSlots[2].time, "balance", S.clients[2]);
-    mk(tm, "10:00", "tire", S.clients[3], "");
+    if (freeSlots[0]) mk(tk, freeSlots[0].time, "full", S.clients[5], "переобуть на зиму, шины у вас на хранении");
+    if (freeSlots[2]) mk(tk, freeSlots[2].time, "wheels", S.clients[2]);
+    mk(tm, "10:00", "full", S.clients[3], "");
     mk(tm, "12:00", "repair", S.clients[8], "прокол");
-    mk(tm, "15:00", "storage", S.clients[12], "сдать летние");
+    mk(tm, "15:00", "mount", S.clients[12], "летние на дисках, сдать на хранение");
     // Напоминания, которые уже должны были уйти к этому моменту (имитация)
     S.bookings.map((b) => SM.reminders.visitTs(b)).flatMap((v) => [v - 24 * 36e5, v - 2 * 36e5]).filter((t) => t <= now && t > now - 864e5).sort((a, b) => a - b).forEach((t) => { at(t); SM.reminders.run(S, t); });
     SM.clock.fixed = null;

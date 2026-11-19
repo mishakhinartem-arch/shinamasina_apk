@@ -139,13 +139,13 @@
   U.act.go = (el) => U.go(el.dataset.v);
   U.badges = function (S) {
     const tk = SM.dayKey(Date.now());
-    return { cars: SM.orders.open(S).length + SM.paint.active(S).length, queue: SM.live.waiting(S).length, storage: S.storage.filter((r) => ["soon", "overdue"].indexOf(SM.storage.status(S, r)) >= 0).length, bookings: S.bookings.filter((b) => b.date === tk && b.status === "new").length };
+    return { cars: SM.orders.open(S).length, queue: SM.live.waiting(S).length, storage: S.storage.filter((r) => ["soon", "overdue"].indexOf(SM.storage.status(S, r)) >= 0).length, bookings: S.bookings.filter((b) => b.date === tk && b.status === "new").length };
   };
   U.renderHeader = function () {
     const S = U.S(), b = U.badges(S), sh = SM.shift.current(S);
     const opName = S.ui.operator && sh && SM.shift.atWork(S, sh).indexOf(S.ui.operator) >= 0 ? SM.empName(S, S.ui.operator) : "выбрать";
     $("#hdr").innerHTML = '<img class="brand" src="logo-header.png" alt="Шинамашина"><button class="op-chip" data-act="operator">Кассир<b>' + SM.esc(opName) + "</b></button><nav class=\"nav\">" +
-      U.NAV.map(([k, l]) => '<button class="nb ' + (U.view === k || (U.view === "order" && k === "kassa") ? "active" : "") + '" data-act="go" data-v="' + k + '">' + l + (b[k] ? '<span class="badge ' + (k === "warehouse" || k === "storage" ? "warn" : "") + '">' + b[k] + "</span>" : "") + "</button>").join("") + "</nav>" + (U.isStandalone() ? "" : '<button class="nb fs-btn" data-act="fullscreen" title="' + (document.fullscreenElement ? "Выйти из полного экрана" : "Во весь экран (без панели Chrome)") + '">' + (document.fullscreenElement ? "🗗" : "⛶") + "</button>");
+      U.NAV.map(([k, l]) => '<button class="nb ' + (U.view === k || (U.view === "order" && k === "kassa") ? "active" : "") + '" data-act="go" data-v="' + k + '">' + l + (b[k] ? '<span class="badge ' + (k === "warehouse" || k === "storage" ? "warn" : "") + '">' + b[k] + "</span>" : "") + "</button>").join("") + "</nav>" + (U.isFullscreen() ? '<span class="hdr-clock" id="hdr-clock">' + SM.fmtTime(Date.now()) + "</span>" : "") + (U.isStandalone() ? "" : '<button class="nb fs-btn" data-act="fullscreen" title="' + (document.fullscreenElement ? "Выйти из полного экрана" : "Во весь экран (без панели Chrome)") + '">' + (document.fullscreenElement ? "🗗" : "⛶") + "</button>");
     // Предупреждения об остатках склада на кассе не показываем — только на странице владельца (owner.html).
     $("#banner").innerHTML = "";
   };
@@ -198,4 +198,80 @@
     U.runReminders(); setInterval(U.runReminders, 60000);
     setInterval(() => { if (["shift", "admin", "cars", "queue"].indexOf(U.view) >= 0 && !document.querySelector(".modal-bg") && !document.body.classList.contains("typing")) U.render(); }, 30000);
   };
+  /* ---------- Часы в шапке в полноэкранном режиме (правка 19.11) ---------- */
+  setInterval(() => { const c = document.getElementById("hdr-clock"); if (c) c.textContent = SM.fmtTime(Date.now()); }, 10000);
+  /* ---------- Телефон: «+7» стоит сразу, маска +7 900 000-00-00 (все поля type=tel) ---------- */
+  U.fmtPhone = function (v) {
+    let d = String(v || "").replace(/\D/g, "");
+    if (d[0] === "8") d = "7" + d.slice(1); else if (d && d[0] !== "7") d = "7" + d;
+    d = d.slice(0, 11); const r = d.slice(1);
+    let out = "+7";
+    if (r.length) out += " " + r.slice(0, 3);
+    if (r.length > 3) out += " " + r.slice(3, 6);
+    if (r.length > 6) out += "-" + r.slice(6, 8);
+    if (r.length > 8) out += "-" + r.slice(8, 10);
+    return r.length ? out : "+7 ";
+  };
+  U.prefillPhones = function (rootEl) { (rootEl || document).querySelectorAll('input[type="tel"]').forEach((i) => { if (!i.value) i.value = "+7 "; }); };
+  document.addEventListener("input", (e) => { const t = e.target; if (!t.matches || !t.matches('input[type="tel"]')) return; const f = U.fmtPhone(t.value); if (f !== t.value) { t.value = f; try { t.setSelectionRange(f.length, f.length); } catch (_) {} } }, true);
+  document.addEventListener("focusin", (e) => { const t = e.target; if (t.matches && t.matches('input[type="tel"]') && !t.value) t.value = "+7 "; });
+  if (typeof MutationObserver !== "undefined") new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) { if (n.matches('input[type="tel"]')) { if (!n.value) n.value = "+7 "; } else if (n.querySelector('input[type="tel"]')) U.prefillPhones(n); } }).observe(document.documentElement, { childList: true, subtree: true });
+  /* ---------- Давление шин: только цифры, точка ставится сама (22 → 2.2, 30 → 3.0) ---------- */
+  document.addEventListener("input", (e) => { const t = e.target; if (!t.matches || !t.matches("input[data-pressure]")) return; const v = SM.pressureFromDigits(t.value); if (v !== t.value) { t.value = v; try { t.setSelectionRange(v.length, v.length); } catch (_) {} } }, true);
+  /* ---------- Поиск клиента с автоподстановкой (поля телефона / имени) ---------- */
+  /**
+   * Подсказки под полем: по телефону, имени или госномеру. onPick({ client, car }) — заполнить форму.
+   * Если найден по госномеру — машина выбрана сразу; по телефону/имени при нескольких машинах — спросим, какая.
+   */
+  U.clientSuggest = function (input, onPick, opts) {
+    if (!input) return;
+    opts = opts || {};
+    const box = document.createElement("div"); box.className = "sugg"; box.hidden = true;
+    input.insertAdjacentElement("afterend", box);
+    input.setAttribute("autocomplete", "off");
+    let items = [];
+    const hide = () => { box.hidden = true; box.innerHTML = ""; };
+    const draw = () => {
+      const q = input.type === "tel" ? input.value.replace(/\D/g, "").replace(/^7/, "") : input.value.trim();
+      if ((input.type === "tel" && q.length < 3) || (input.type !== "tel" && q.length < 2)) return hide();
+      const S = U.S();
+      items = SM.clients.search(S, input.type === "tel" ? q : input.value, 6);
+      if (!items.length) return hide();
+      box.innerHTML = items.map((x, i) => '<button type="button" class="sugg-i" data-i="' + i + '">' + (x.car && x.car.plate ? U.plateHtml(x.car.plate, true) : x.client.plate ? U.plateHtml(x.client.plate, true) : "") + '<span><b>' + SM.esc(x.client.name || "без имени") + "</b> " + SM.phoneShow(x.client.phone) + "<small>" + SM.esc(x.car ? SM.clients.label(x.car) : SM.clients.cars(x.client).map(SM.clients.label).join(", ")) + "</small></span></button>").join("") + '<div class="sugg-h">Клиент из базы — тап, чтобы подставить данные</div>';
+      box.hidden = false;
+    };
+    input.addEventListener("input", draw);
+    input.addEventListener("focus", draw);
+    input.addEventListener("blur", () => setTimeout(hide, 250));
+    box.addEventListener("pointerdown", (e) => e.preventDefault());
+    box.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-i]"); if (!b) return;
+      const x = items[Number(b.dataset.i)]; hide();
+      if (x.car || opts.noCar) return onPick({ client: x.client, car: x.car || null });
+      U.pickCar(x.client, (car) => onPick({ client: x.client, car }));
+    });
+  };
+  /** Выбор машины клиента: одна — сразу; несколько — спросить. */
+  U.pickCar = function (c, cb, title) {
+    const cars = SM.clients.cars(c);
+    if (cars.length <= 1) return cb(cars[0] || null);
+    U.modal({ title: title || "Какая машина приехала?", body: '<div class="hint" style="margin-bottom:8px">' + SM.esc(c.name || SM.phoneShow(c.phone)) + " — машин у клиента: " + cars.length + "</div>" + cars.map((car, i) => '<button class="btn block car-pick" data-ci="' + i + '" style="margin-bottom:8px;justify-content:flex-start;min-height:64px">' + (car.plate ? U.plateHtml(car.plate, true) : "без номера") + " <span>" + SM.esc(car.car || "") + (car.wheel_size ? " · " + car.wheel_size : "") + "</span></button>").join(""),
+      mount: (m, close) => m.addEventListener("click", (e) => { const b = e.target.closest("[data-ci]"); if (b) { close(); cb(cars[Number(b.dataset.ci)]); } }) });
+  };
+  /* ---------- Фото с камеры планшета (акт, шины на хранении) ---------- */
+  /** Открывает камеру (на планшете — задняя), уменьшает до 1280 px, JPEG ≈70% и отдаёт dataURL. */
+  U.takePhoto = function (cb) {
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*"; inp.setAttribute("capture", "environment"); inp.style.display = "none";
+    inp.onchange = () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) U.readPhoto(f, cb); };
+    document.body.appendChild(inp); inp.click();
+  };
+  U.readPhoto = function (file, cb) {
+    const rd = new FileReader();
+    rd.onload = () => { const img = new Image(); img.onload = () => { const k = Math.min(1, 1280 / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); cb(c.toDataURL("image/jpeg", 0.7)); }; img.onerror = () => U.toast("Не удалось прочитать фото", true); img.src = rd.result; };
+    rd.readAsDataURL(file);
+  };
+  U.photoThumbs = function (list) {
+    return (list || []).map((p) => { const src = SM.photos.get(p.id); return '<button class="thumb" data-act="photoView" data-id="' + p.id + '" title="' + SM.esc((p.where ? p.where + " · " : "") + SM.fmtDT(p.ts) + " · " + p.who) + '">' + (src ? '<img src="' + src + '" alt="фото">' : "нет файла") + "<small>" + (p.where ? SM.esc(p.where) + "<br>" : "") + SM.fmtDT(p.ts) + "</small></button>"; }).join("");
+  };
+  U.act.photoView = (el) => { const src = SM.photos.get(el.dataset.id); U.modal({ title: "Фото", wide: true, body: src ? '<img src="' + src + '" style="max-width:100%;border-radius:12px">' : '<div class="empty">Файл фото не найден в этом браузере</div>' }); };
 })();

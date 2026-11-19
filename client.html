@@ -1,28 +1,135 @@
 <!DOCTYPE html>
 <html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Анкета клиента — Шинамашина (демо)</title><link rel="icon" href="icon.svg"><meta name="theme-color" content="#ff6b00">
-<link rel="stylesheet" href="css/app.css"><style>.wrap{max-width:640px;margin:0 auto;padding:12px}.top{display:flex;align-items:center;gap:10px;margin-bottom:10px}.top img{height:44px}</style></head>
-<body><div class="wrap"><div class="top"><img src="logo-header.png" alt="Шинамашина"><div class="h1">Анкета клиента</div></div><div id="root"></div>
-<div class="demo-foot">Демо-версия, данные вымышлены · анкета сохраняется только в этом браузере</div></div><div id="toast"></div><button id="kbd-done" type="button">Готово ⌨</button>
-<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/queue.js"></script><script src="js/printer.js"></script><script src="js/products.js"></script><script src="js/paint.js"></script><script src="js/reminders.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script><script src="js/consent.js"></script><script src="ui/base.js"></script>
+<title>Клиентский планшет — Шинамашина (демо)</title><link rel="icon" href="icon.svg"><link rel="manifest" href="manifest-queue.webmanifest"><meta name="theme-color" content="#ff6b00">
+<link rel="stylesheet" href="css/app.css">
+<style>
+body{background:#111827;color:#fff}
+.kw{min-height:calc(100vh - 30px);min-height:calc(100dvh - 30px);display:flex;flex-direction:column;padding:14px 18px 20px;gap:14px;max-width:1100px;margin:0 auto}
+.ktop{display:flex;align-items:center;gap:14px}.ktop img{height:64px;background:#fff;border-radius:14px;padding:6px 10px}.ktop .ttl{font-size:1.5rem;font-weight:900;flex:1}
+.kclock{font-size:3rem;font-weight:900;font-variant-numeric:tabular-nums}
+.kq{background:#1f2937;border-radius:22px;padding:16px 20px;font-size:1.6rem;font-weight:800;text-align:center}.kq b{color:var(--accent);font-size:2.2rem}
+.kbtns{display:grid;grid-template-columns:1fr 1fr;gap:16px;flex:1;min-height:260px}
+.kbig{border:0;border-radius:28px;font-size:2.1rem;font-weight:900;padding:20px;min-height:200px;line-height:1.15;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.kbig small{display:block;font-size:1.05rem;font-weight:700;margin-top:10px;opacity:.85}
+.kbig.t{background:var(--accent);color:#111}.kbig.a{background:#fff;color:#111}
+.kfoot{display:flex;align-items:center;gap:14px;color:#cbd5e1;font-size:.95rem}.kfoot .qr{background:#fff;border-radius:10px;padding:4px;line-height:0}.kfoot .qr svg{width:96px;height:96px}
+.kcard{background:#fff;color:#111;border-radius:24px;padding:18px 20px}
+.kcard .inp{font-size:1.3rem;min-height:62px}.kcard .fld{font-size:1rem;margin-top:10px}
+.kcard .check{font-size:1.1rem;min-height:56px}
+.kact{min-height:84px;font-size:1.5rem;border-radius:20px}
+.kgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ksvc{display:grid;grid-template-columns:1fr 1fr;gap:12px}.ksvc button{min-height:110px;border-radius:20px;border:3px solid #e5e7eb;background:#fff;font-size:1.35rem;font-weight:900;color:#111}.ksvc small{display:block;font-size:.95rem;font-weight:600;color:#64748b}
+.ticket{background:#fff;color:#111;border-radius:24px;padding:22px 30px;text-align:center}.ticket .no{font-size:6rem;font-weight:900;line-height:1}.ticket .row{justify-content:center}
+.qinfo{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}.qinfo div{background:#f1f5f9;border-radius:14px;padding:10px}.qinfo b{display:block;font-size:1.5rem}
+.kidle{position:fixed;bottom:8px;right:12px;font-size:.85rem;color:#94a3b8}
+.kdemo{text-align:center;padding:4px 12px 10px;font-size:.75rem;color:#64748b}.kdemo a{color:#94a3b8}
+.qwarn{background:#fef3c7;color:#92400e;border-radius:14px;padding:10px 14px;font-weight:700}
+.modal{color:var(--text)}
+.khello{font-size:2.4rem;font-weight:900;text-align:center}
+@media (max-width:760px){.kbtns,.kgrid,.ksvc{grid-template-columns:1fr}.kbig{font-size:1.7rem;min-height:150px}.kclock{font-size:2rem}}
+</style></head>
+<body><div class="kw" id="root"></div><div class="kidle" id="idle"></div><div class="kdemo">Демо-версия, данные вымышлены · хранятся только в этом браузере · <a href="index.html">касса</a> · <button id="fs" style="background:none;border:0;color:#94a3b8;text-decoration:underline">⛶ полный экран</button></div><div id="toast"></div><button id="kbd-done" type="button">Готово ⌨</button>
+<script src="js/prices-data.js"></script><script src="js/core.js"></script><script src="js/store.js"></script><script src="js/clients.js"></script><script src="js/prices.js"></script><script src="js/cart.js"></script><script src="js/payroll.js"></script><script src="js/shift.js"></script><script src="js/orders.js"></script><script src="js/warehouse.js"></script><script src="js/storage.js"></script><script src="js/booking.js"></script><script src="js/queue.js"></script><script src="js/printer.js"></script><script src="js/products.js"></script><script src="js/paint.js"></script><script src="js/reminders.js"></script><script src="js/reports.js"></script><script src="js/excel.js"></script><script src="js/seed.js"></script><script src="js/docs.js"></script><script src="js/consent.js"></script><script src="ui/base.js"></script>
+<script src="vendor/qrcode.js"></script>
 <script>
+/* Клиентский планшет (улица / тамбур): талон в живую очередь или анкета клиента. Без действий 60 с — возврат на главную, введённое стирается. */
 (function(){
-  var root=document.getElementById("root"), plate="";
-  root.innerHTML='<div class="card"><div class="hint">Заполните, чтобы мы узнавали вас по номеру, хранили историю и давали скидку постоянным клиентам.</div><label class="fld">Имя</label><input class="inp" id="f-name"><label class="fld">Телефон</label><input class="inp" id="f-phone" type="tel" inputmode="tel" placeholder="+7 900 000-00-00"><label class="fld">Госномер</label><button class="btn block ghost" id="f-plate" style="min-height:66px">'+SM.ui.plateHtml("",true)+'</button><label class="fld">Автомобиль</label><input class="inp" id="f-car" placeholder="Kia Rio"><label class="fld">Радиус колёс</label><select class="inp" id="f-r"><option value="">не знаю</option>'+SM.prices.RADII.map(function(r){return "<option>"+r+"</option>";}).join("")+'</select>'+
-   '<label class="check" style="margin-top:12px"><input type="checkbox" id="f-ok"> <span>Согласен на обработку персональных данных — <a href="#" id="f-text">текст согласия</a></span></label>'+SM.consentDetails("f-details")+'<div class="hint" style="margin-top:4px">Текст согласия — шаблон, юристом не проверен (демо).</div><div id="f-err" class="down" style="font-weight:700;margin-top:8px"></div><button class="btn primary block" id="f-send" style="margin-top:10px;min-height:64px" disabled>Отправить</button></div>';
-  var ok=document.getElementById("f-ok"), send=document.getElementById("f-send");
-  ok.onchange=function(){ send.disabled=!ok.checked; };
-  document.getElementById("f-text").onclick=function(e){ e.preventDefault(); var d=document.getElementById("f-details"); d.open=true; d.scrollIntoView({behavior:"smooth"}); };
-  document.getElementById("f-plate").onclick=function(){ SM.ui.plateKeyboard({ title:"Госномер", value:plate, onDone:function(p){ plate=p; document.getElementById("f-plate").innerHTML=SM.ui.plateHtml(p,true); } }); };
-  send.onclick=function(){
-    var err=document.getElementById("f-err"); if(!ok.checked) return err.textContent="Нужно согласие на обработку ПД";
-    var phone=document.getElementById("f-phone").value; if(SM.normPhone(phone).length!==11) return err.textContent="Укажите телефон полностью";
-    var S=SM.reload(), consent={ at:SM.now(), source:"анкета клиента" };
-    var d={ name:document.getElementById("f-name").value.trim(), phone:phone, plate:plate, car:document.getElementById("f-car").value.trim(), wheel_size:document.getElementById("f-r").value, consent:consent, source:"анкета" };
-    var r=SM.addClient(S,d);
-    if(!r.ok){ var c=r.dup; c.consent=consent; if(d.name) c.name=d.name; if(d.car) c.car=d.car; if(d.wheel_size) c.wheel_size=d.wheel_size; if(plate && !c.plate) c.plate=SM.normPlate(plate); }
-    SM.save();
-    root.innerHTML='<div class="card" style="text-align:center"><div class="h1">✓ Спасибо!</div><div style="margin-top:8px">Анкета сохранена'+(r.ok?'':' (обновили вашу карточку)')+'. Согласие на обработку ПД: '+SM.fmtDT(consent.at)+'.</div></div>';
-  };
+  var root = document.getElementById("root"), esc = SM.esc, last = Date.now(), screen = "home", IDLE = 60;
+  var ADDRESS = "Андреевка, Алабушевская ул., 2 стр. 2", PHONE = "+7 (995) 506-95-62";
+  function touch(){ last = Date.now(); }
+  ["pointerdown","keydown","input","touchstart"].forEach(function(e){ document.addEventListener(e, touch, true); });
+  function closeModals(){ document.querySelectorAll(".modal-bg").forEach(function(m){ m.remove(); }); }
+  function qrSvg(){ try { var q = qrcode(0, "M"); q.addData(new URL("book.html", location.href).href); q.make(); return q.createSvgTag({ cellSize: 4, margin: 1, scalable: true }); } catch(e){ return ""; } }
+  function queueLine(S){
+    if (!S.settings.seasonMode) return '<div class="kq">Живая очередь сейчас не работает — подойдите к администратору, примем без талона</div>';
+    var w = SM.live.waiting(S), next = SM.live.waitMin(S, (w.length ? w[w.length-1].no : 0) + 1);
+    return '<div class="kq">Перед вами <b>' + w.length + '</b> ' + plural(w.length, "машина", "машины", "машин") + ', ожидание ' + (next > 0 ? '<b>~' + next + '</b> мин' : '<b>сразу</b>') + '</div>';
+  }
+  function plural(n,a,b,c){ n = Math.abs(n) % 100; var n1 = n % 10; if (n > 10 && n < 20) return c; if (n1 > 1 && n1 < 5) return b; if (n1 === 1) return a; return c; }
+  function top(){ return '<div class="ktop"><img src="logo-header.png" alt="Шинамашина"><div class="ttl">Шинамашина</div><div class="kclock" id="kclock">' + SM.fmtTime(Date.now()) + '</div></div>'; }
+  function home(){
+    screen = "home"; closeModals(); var S = SM.reload();
+    root.innerHTML = top() + queueLine(S) +
+      '<div class="kbtns"><button class="kbig t" id="k-ticket"' + (S.settings.seasonMode ? '' : ' disabled style="opacity:.4"') + '>🎫 Взять талон в очередь<small>введите госномер — получите номер</small></button><button class="kbig a" id="k-form">📝 Заполнить анкету<small>Я новый клиент · скидка постоянным</small></button></div>' +
+      '<div class="kfoot"><span class="qr">' + qrSvg() + '</span><div><b>Записаться на другой день</b> — наведите камеру телефона на QR-код<br>' + ADDRESS + ' · ' + PHONE + '</div></div>';
+    document.getElementById("k-ticket").onclick = askPlate;
+    document.getElementById("k-form").onclick = function(){ form({}); };
+  }
+  /* ---------- Талон ---------- */
+  function askPlate(){ screen = "plate"; SM.ui.plateKeyboard({ title: "Ваш госномер", onDone: function(p){ afterPlate(p); } }); }
+  function afterPlate(plate){
+    var S = SM.reload(), f = SM.clients.findByPlate(S, plate);
+    if (f) return chooseService(plate, f.client.name ? "Здравствуйте, " + f.client.name.replace(/\s*\(демо\)$/, "") + "!" : "Рады видеть вас снова!");
+    screen = "newcar";
+    root.innerHTML = top() + '<div class="kcard" style="text-align:center"><div class="khello">Вы у нас впервые?</div><div style="font-size:1.2rem;margin-top:8px">Заполните короткую анкету — будем узнавать вас по номеру, хранить историю и давать скидку постоянным клиентам.</div>' +
+      '<div class="kgrid" style="margin-top:16px"><button class="btn primary kact" id="n-form">📝 Заполнить анкету</button><button class="btn kact" id="n-skip">Просто взять талон</button></div><button class="btn ghost" style="margin-top:12px" id="n-home">← На главную</button></div>';
+    document.getElementById("n-form").onclick = function(){ form({ plate: plate, thenTicket: true }); };
+    document.getElementById("n-skip").onclick = function(){ chooseService(plate, ""); };
+    document.getElementById("n-home").onclick = home;
+  }
+  function chooseService(plate, hello){
+    screen = "service"; var S = SM.reload();
+    root.innerHTML = top() + (hello ? '<div class="khello">' + esc(hello) + '</div>' : '') + '<div class="kcard"><div class="h1" style="text-align:center">Что нужно сделать?</div><div class="ksvc" style="margin-top:12px">' +
+      SM.booking.TIRE_DIRECTIONS.map(function(d){ return '<button data-svc="' + d.key + '">' + d.label + '<small>' + d.sub + ' · ≈' + SM.booking.durMin(S, d.key) + ' мин</small></button>'; }).join("") + '<button data-svc="">Ремонт / другое<small>мастер подскажет</small></button></div><button class="btn ghost" style="margin-top:12px" id="s-home">← На главную</button></div>';
+    root.querySelectorAll("[data-svc]").forEach(function(b){ b.onclick = function(){ take(plate, b.dataset.svc); }; });
+    document.getElementById("s-home").onclick = home;
+  }
+  function take(plate, service){
+    var S = SM.reload(), r = SM.live.take(S, plate, service);
+    if (!r.ok) { SM.ui.toast(r.msg, true); return home(); }
+    SM.save(); screen = "ticket";
+    var pr = SM.printer.print(S, SM.printer.ticketLines(S, r.ticket, r.wait));
+    root.innerHTML = top() + '<div class="ticket" id="ticket"><div style="font-weight:800;color:#64748b">' + (r.existed ? "Вы уже в очереди — ваш талон" : "Ваш талон") + '</div><div class="no">№' + r.ticket.no + '</div><div class="row" style="margin-top:6px">' + SM.ui.plateHtml(r.ticket.plate) + '</div>' +
+      '<div class="qinfo"><div>Перед вами<b>' + r.ahead + '</b></div><div>Ожидание<b>' + SM.live.waitLabel(r.wait).replace("≈ ", "≈") + '</b></div><div>Пост<b>' + r.post.join(", ") + '</b></div></div></div>' +
+      (pr.ok ? '<div class="kq">🖨 Талон печатается — заберите его у принтера.</div>' : '<div class="qwarn">' + (pr.reason === "browser" ? "Демо в браузере: бумажный талон печатается только в приложении (APK) на сетевом принтере. Запомните или сфотографируйте номер." : "Принтер недоступен: " + esc(pr.msg) + ". Запомните номер.") + '</div>') +
+      '<button class="btn primary kact" id="t-ok">Готово</button>';
+    document.getElementById("t-ok").onclick = home;
+  }
+  /* ---------- Анкета ---------- */
+  function form(o){
+    screen = "form"; var plate = o.plate || "";
+    root.innerHTML = top() + '<div class="kcard"><div class="h1">Анкета клиента</div><div class="hint" style="font-size:1rem">Заполните, чтобы мы узнавали вас по номеру, хранили историю и давали скидку постоянным клиентам.</div>' +
+      '<div class="kgrid"><div><label class="fld">Имя</label><input class="inp" id="f-name" autocomplete="off"></div><div><label class="fld">Телефон</label><input class="inp" id="f-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 900 000-00-00"></div>' +
+      '<div><label class="fld">Госномер</label><button class="btn block ghost" id="f-plate" style="min-height:72px">' + SM.ui.plateHtml(plate, true) + '</button></div><div><label class="fld">Автомобиль</label><input class="inp" id="f-car" placeholder="Kia Rio" autocomplete="off"></div>' +
+      '<div><label class="fld">Размер колёс</label><select class="inp" id="f-r"><option value="">не знаю</option>' + SM.prices.RADII.map(function(r){ return "<option>" + r + "</option>"; }).join("") + '</select></div><div></div>' +
+      '<div><label class="fld">Давление перед, бар</label><input class="inp" id="f-pf" data-pressure inputmode="numeric" placeholder="2.2" autocomplete="off"></div><div><label class="fld">Давление зад, бар</label><input class="inp" id="f-pr" data-pressure inputmode="numeric" placeholder="2.4" autocomplete="off"></div></div>' +
+      '<div class="hint" style="font-size:.95rem">Давление — только цифры, точка ставится сама: 22 → 2.2, 30 → 3.0.</div>' +
+      '<label class="check" style="margin-top:12px"><input type="checkbox" id="f-ok"> <span>Согласен на обработку персональных данных — <a href="#" id="f-text">текст согласия</a></span></label>' + SM.consentDetails("f-details") + '<div class="hint" style="margin-top:4px">Текст согласия — шаблон, юристом не проверен (демо).</div><div id="f-err" class="down" style="font-weight:700;margin-top:8px;font-size:1.1rem"></div>' +
+      '<div class="kgrid" style="margin-top:10px"><button class="btn kact" id="f-home">← На главную</button><button class="btn primary kact" id="f-send" disabled>Готово</button></div></div>';
+    var ok = document.getElementById("f-ok"), send = document.getElementById("f-send");
+    ok.onchange = function(){ send.disabled = !ok.checked; };
+    document.getElementById("f-home").onclick = home;
+    document.getElementById("f-text").onclick = function(e){ e.preventDefault(); var d = document.getElementById("f-details"); d.open = true; d.scrollIntoView({ behavior: "smooth" }); };
+    document.getElementById("f-plate").onclick = function(){ SM.ui.plateKeyboard({ title: "Госномер", value: plate, onDone: function(p){ plate = p; document.getElementById("f-plate").innerHTML = SM.ui.plateHtml(p, true); } }); };
+    send.onclick = function(){
+      var err = document.getElementById("f-err"); if (!ok.checked) return err.textContent = "Нужно согласие на обработку ПД";
+      var phone = SM.phoneVal(document.getElementById("f-phone").value); if (SM.normPhone(phone).length !== 11) return err.textContent = "Укажите телефон полностью: +7 и 10 цифр";
+      var pf = document.getElementById("f-pf").value, prr = document.getElementById("f-pr").value;
+      if (!SM.pressureValid(pf) || !SM.pressureValid(prr)) return err.textContent = "Давление: от 1.0 до 6.0, например 2.2";
+      var r = SM.kioskSave(SM.reload(), { name: document.getElementById("f-name").value.trim(), phone: phone, plate: plate, car: document.getElementById("f-car").value.trim(), wheel_size: document.getElementById("f-r").value, pFront: pf, pRear: prr });
+      if (!r.ok) return err.textContent = r.msg;
+      SM.save(); thanks(r, plate, o.thenTicket);
+    };
+  }
+  function thanks(r, plate, thenTicket){
+    screen = "thanks"; var S = SM.reload();
+    root.innerHTML = top() + '<div class="kcard" style="text-align:center"><div class="khello">✓ Спасибо!</div><div style="font-size:1.2rem;margin-top:8px">Анкета сохранена' + (r.updated ? ' (обновили вашу карточку)' : '') + '. Согласие на обработку ПД: ' + SM.fmtDT(r.client.consent.at) + '.</div>' +
+      (S.settings.seasonMode ? '<div class="h1" style="margin-top:16px">Взять талон в очередь?</div><div class="kgrid" style="margin-top:10px"><button class="btn primary kact" id="y-t">🎫 Да, взять талон</button><button class="btn kact" id="y-n">Нет, спасибо</button></div>' : '<button class="btn primary kact" style="margin-top:14px" id="y-n">Готово</button>') + '</div>';
+    var yt = document.getElementById("y-t"); if (yt) yt.onclick = function(){ if (plate) chooseService(plate, ""); else askPlate(); };
+    document.getElementById("y-n").onclick = home;
+  }
+  /* ---------- Автосброс и часы ---------- */
+  setInterval(function(){
+    var c = document.getElementById("kclock"); if (c) c.textContent = SM.fmtTime(Date.now());
+    var left = IDLE - Math.floor((Date.now() - last) / 1000), idle = document.getElementById("idle");
+    if (screen === "home" && !document.querySelector(".modal-bg")) { idle.textContent = ""; return; }
+    idle.textContent = left <= 15 ? "Вернёмся на главную через " + Math.max(0, left) + " с" : "";
+    if (left <= 0) { touch(); home(); }
+  }, 1000);
+  document.getElementById("fs").onclick = function(){ SM.ui.act.fullscreen(); };
+  SM.onSave(function(ext){ if (ext && screen === "home" && !document.querySelector(".modal-bg")) home(); });
+  SM.kioskHome = home; SM.kioskIdleSec = function(s){ IDLE = s; };
+  home();
 })();
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function(){});
 </script></body></html>

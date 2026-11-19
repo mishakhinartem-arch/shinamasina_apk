@@ -43,8 +43,8 @@
     return { ok: true, row };
   };
   Sh.revenue = function (S, shiftId) {
-    const r = { total: 0, cash: 0, card: 0, qr: 0, cashless: 0, count: 0, storage: 0, goods: 0 };
-    S.receipts.forEach((x) => { if (x.shiftId !== shiftId) return; r.total += x.total; r[x.payment] += x.total; if (x.kind === "service") r.count++; r.storage += SM.cart.storageAmount(x); r.goods += SM.cart.goodsAmount(x); });
+    const r = { total: 0, cash: 0, card: 0, qr: 0, cashless: 0, count: 0, storage: 0, goods: 0, paint: 0 };
+    S.receipts.forEach((x) => { if (x.shiftId !== shiftId) return; r.total += x.total; r[x.payment] += x.total; if (x.kind === "service") r.count++; r.storage += SM.cart.storageAmount(x); r.goods += SM.cart.goodsAmount(x); r.paint += SM.cart.paintAmount(x); });
     r.cashless = r.card + r.qr; return r;
   };
   Sh.preview = function (S) { const sh = Sh.current(S); return sh ? SM.payroll.forShift(S, sh) : []; };

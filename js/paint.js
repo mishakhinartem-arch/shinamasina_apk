@@ -4,6 +4,9 @@
   const SM = root.SM;
   const PN = (SM.paint = {});
   PN.STATUS = { paint: "В покраске", ready: "Готово, ждёт выдачи", done: "Выдано (оплачено)", cancel: "Отменён" };
+  /** Состояние дисков при приёмке (можно выбрать несколько) — печатается в акте. */
+  PN.DISK_CONDITIONS = ["без повреждений", "царапины", "сколы краски", "коррозия", "бордюрка (потёртости кромки)", "погнут", "трещина", "следы прежней покраски"];
+  PN.condText = (p) => (p.diskCondition && p.diskCondition.length ? p.diskCondition.join(", ") : "");
   PN.get = (S, id) => S.paint.find((p) => p.id === id) || null;
   PN.active = (S) => S.paint.filter((p) => p.status === "paint" || p.status === "ready").sort((a, b) => a.createdAt - b.createdAt);
   PN.title = (p) => "Наряд П-" + String(p.no).padStart(3, "0");
@@ -42,9 +45,12 @@
     const items = [{ id: SM.uid("i"), key: "paint", name: "Покраска дисков ×" + disks + " (" + String(d.color).trim() + ")", price: paintPrice, qty: 1, radius: d.radius || "", typeKey: "", surchargeEligible: false, manual: true, gift: false }];
     if (straighten) items.push({ id: SM.uid("i"), key: "f:Правка дисков", name: "Правка дисков (" + straighten.qty + " шт)", price: straighten.sum, qty: 1, radius: "", typeKey: "", surchargeEligible: false, manual: true, gift: false });
     for (const s of d.services || []) { const r = svcItem(S, s); if (r.err) return { ok: false, msg: r.err }; items.push(r.item); }
-    const client = (plate && SM.clientByPlate(S, plate)) || (phone.length === 11 && SM.clientByPhone(S, phone)) || null;
-    const p = { id: SM.uid("pn"), no: ++S.paintSeq, createdAt: SM.now(), status: "paint", plate, phone, name: String(d.name || (client && client.name) || "").trim(), car: d.car || "", clientId: client ? client.id : null, radius: d.radius || "", disks, color: String(d.color).trim(), caps: !!d.caps, tires: !!d.tires, tireBrand: d.tires ? String(d.tireBrand).trim() : "", straighten, items, comment: d.comment || "", history: [], who: who || "" };
-    PN.log(p, who, "Принято в покраску: " + disks + " диск(а) " + (p.radius || "") + ", цвет «" + p.color + "», " + (p.caps ? "с колпачками" : "без колпачков") + ", " + (p.tires ? "с резиной (" + p.tireBrand + ")" : "без резины") + (straighten ? ", правка " + straighten.qty + " шт" : "") + ". Оплата при выдаче.");
+    const fc = plate ? SM.clients.findByPlate(S, plate) : null;
+    const client = (fc && fc.client) || (d.clientId && SM.client(S, d.clientId)) || (phone.length === 11 && SM.clientByPhone(S, phone)) || null;
+    const diskCondition = (Array.isArray(d.diskCondition) ? d.diskCondition : d.diskCondition ? [d.diskCondition] : []).map((x) => String(x).trim()).filter(Boolean);
+    if (diskCondition.indexOf("без повреждений") >= 0 && diskCondition.length > 1) return { ok: false, msg: "Состояние дисков: «без повреждений» нельзя вместе с повреждениями" };
+    const p = { id: SM.uid("pn"), no: ++S.paintSeq, createdAt: SM.now(), status: "paint", plate, phone, name: String(d.name || (client && client.name) || "").trim(), car: d.car || "", clientId: client ? client.id : null, carId: fc ? fc.car.id : d.carId || null, radius: d.radius || "", disks, diskCondition, color: String(d.color).trim(), caps: !!d.caps, tires: !!d.tires, tireBrand: d.tires ? String(d.tireBrand).trim() : "", straighten, items, comment: d.comment || "", history: [], who: who || "" };
+    PN.log(p, who, "Принято в покраску: " + disks + " диск(а) " + (p.radius || "") + ", цвет «" + p.color + "», " + (p.caps ? "с колпачками" : "без колпачков") + ", " + (p.tires ? "с резиной (" + p.tireBrand + ")" : "без резины") + (straighten ? ", правка " + straighten.qty + " шт" : "") + (diskCondition.length ? ". Состояние дисков: " + diskCondition.join(", ") : "") + ". Оплата при выдаче.");
     S.paint.push(p);
     return { ok: true, order: p, client };
   };
@@ -55,6 +61,12 @@
     if (same) same.qty += r.item.qty; else p.items.push(r.item);
     PN.log(p, who, "Добавлено: " + r.item.name + (r.item.radius ? " " + r.item.radius : "") + " ×" + r.item.qty + " по " + SM.fmt(r.item.price));
     return { ok: true };
+  };
+  PN.setQty = function (S, p, itemId, qty, who) {
+    const it = p.items.find((i) => i.id === itemId); if (!it) return { ok: false };
+    if (it.key === "paint" || it.key === "f:Правка дисков") return { ok: false, msg: "Количество этой позиции не меняется" };
+    qty = Math.round(Number(qty)); if (qty <= 0) return PN.removeItem(S, p, itemId, who);
+    PN.log(p, who, "Количество «" + it.name + "»: " + it.qty + " → " + qty); it.qty = qty; return { ok: true };
   };
   PN.removeItem = function (S, p, itemId, who) {
     const it = p.items.find((i) => i.id === itemId); if (!it) return { ok: false };
@@ -69,7 +81,7 @@
     if (!p || p.status === "done" || p.status === "cancel") return { ok: false, msg: "Наряд уже закрыт" };
     const sh = SM.shift.current(S); if (!sh) return { ok: false, msg: "Сначала откройте смену (вкладка «Смена»)" };
     const t = PN.totals(S, p); if (!(t.total > 0)) return { ok: false, msg: "В наряде нет сумм" };
-    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: null, paintId: p.id, kind: "service", payment, total: t.total, totals: t, items: p.items.map((i) => Object.assign({}, i)), runflat: false, loyalty: false, clientId: p.clientId, plate: p.plate, masters: SM.shift.atWork(S, sh).slice(), who: who || "" };
+    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: null, paintId: p.id, kind: "service", payment, total: t.total, totals: t, items: p.items.map((i) => Object.assign({}, i)), runflat: false, loyalty: false, clientId: p.clientId, carId: p.carId || null, plate: p.plate, masters: SM.shift.atWork(S, sh).slice(), who: who || "" };
     S.receipts.push(r);
     if (payment === "cash") SM.shift.drawerMove(S, t.total, "sale", "Чек №" + r.no + " (покраска)", r.ts);
     const wo = SM.warehouse.autoWriteOff(S, r); r.materialCost = wo.cost;

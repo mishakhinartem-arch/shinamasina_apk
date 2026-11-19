@@ -4,6 +4,9 @@
   const O = (SM.orders = {});
   O.STATUS = [ { key: "new", label: "Новый" }, { key: "work", label: "В работе" }, { key: "ready", label: "Готов" }, { key: "done", label: "Выдан (оплачен)" } ];
   O.statusLabel = (k) => (O.STATUS.find((s) => s.key === k) || { label: k === "cancel" ? "Отменён" : k }).label;
+  /** Подпись статуса на карточках: после «Готов» машина остаётся до оплаты и подсвечивается. */
+  O.READY_WAIT = "Готова, ждёт оплаты";
+  O.chipLabel = (k) => (k === "ready" ? O.READY_WAIT : O.statusLabel(k));
   O.open = (S) => S.orders.filter((o) => o.status !== "done" && o.status !== "cancel");
   O.get = (S, id) => S.orders.find((o) => o.id === id) || null;
   O.log = function (o, who, text) { o.history.push({ ts: SM.now(), who: who || "Касса", text }); };
@@ -14,19 +17,24 @@
     const queueNo = data.queueNo || null;
     if (!plate && !queueNo) return { ok: false, msg: "Нужен госномер или номер очереди" };
     if (plate) { const ex = O.open(S).find((o) => o.plate === plate); if (ex) return { ok: true, order: ex, existed: true }; }
-    const client = plate ? SM.clientByPlate(S, plate) : null;
-    const o = { id: SM.uid("o"), no: ++S.orderSeq, plate, queueNo, clientId: client ? client.id : null, status: "new", items: [], runflat: false, loyalty: false, discount: null, masters: [], history: [], createdAt: SM.now(), shiftId: (SM.shift.current(S) || {}).id || null, bookingId: data.bookingId || null, note: data.note || "" };
+    const fc = plate ? SM.clients.findByPlate(S, plate) : null;
+    const client = fc ? fc.client : null;
+    const o = { id: SM.uid("o"), no: ++S.orderSeq, plate, queueNo, clientId: client ? client.id : null, carId: fc ? fc.car.id : null, status: "new", items: [], runflat: false, loyalty: false, discount: null, masters: [], history: [], createdAt: SM.now(), shiftId: (SM.shift.current(S) || {}).id || null, bookingId: data.bookingId || null, note: data.note || "" };
     if (client && SM.clientVisits(S, client.id).length >= 1) o.loyalty = true;
-    O.log(o, who, "Заказ открыт по " + (plate ? "госномеру " + plate : "номеру очереди " + queueNo) + (client ? " · клиент найден: " + (client.name || SM.phoneShow(client.phone)) : ""));
+    O.log(o, who, "Заказ открыт по " + (plate ? "госномеру " + plate : "номеру очереди " + queueNo) + (client ? " · клиент найден: " + (client.name || SM.phoneShow(client.phone)) + (SM.clients.cars(client).length > 1 ? " (машина " + SM.clients.label(fc.car) + ")" : "") : ""));
     if (o.loyalty) O.log(o, who, "Скидка постоянному клиенту " + S.settings.loyaltyPct + "% (автоматически)");
     const sh = SM.shift.current(S); if (sh) o.masters = SM.shift.atWork(S, sh).slice();
     S.orders.push(o);
     return { ok: true, order: o, client };
   };
-  O.attachClient = function (S, o, client, who) {
+  /** Привязать клиента (и его машину). car — машина клиента; если не указана и машина одна — берём её. */
+  O.attachClient = function (S, o, client, who, car) {
     o.clientId = client ? client.id : null;
-    if (client && !o.plate && client.plate) o.plate = client.plate;
-    if (client) { O.log(o, who, "Привязан клиент: " + (client.name || SM.phoneShow(client.phone))); if (SM.clientVisits(S, client.id).length >= 1 && !o.loyalty) { o.loyalty = true; O.log(o, who, "Скидка постоянному клиенту " + S.settings.loyaltyPct + "% (автоматически)"); } }
+    const cars = client ? SM.clients.cars(client) : [];
+    if (!car && client) car = (o.plate && cars.find((x) => x.plate === o.plate)) || (cars.length === 1 ? cars[0] : null);
+    o.carId = car ? car.id : null;
+    if (car && car.plate && (!o.plate || cars.some((x) => x.plate === o.plate))) o.plate = car.plate;
+    if (client) { O.log(o, who, "Привязан клиент: " + (client.name || SM.phoneShow(client.phone)) + (car && cars.length > 1 ? " · машина " + SM.clients.label(car) : "")); if (SM.clientVisits(S, client.id).length >= 1 && !o.loyalty) { o.loyalty = true; O.log(o, who, "Скидка постоянному клиенту " + S.settings.loyaltyPct + "% (автоматически)"); } }
   };
   O.addItem = function (S, o, tile, qty, ctx, who, manualPrice) {
     qty = qty || 1;
@@ -84,7 +92,7 @@
     if (o.status === status) return { ok: true };
     O.log(o, who, "Статус: " + O.statusLabel(o.status) + " → " + O.statusLabel(status)); o.status = status;
     if (status === "work" && !o.startedAt) o.startedAt = SM.now();
-    if (status === "ready") o.readyAt = SM.now();
+    if (status === "ready") { o.readyAt = SM.now(); O.log(o, who, O.READY_WAIT + " — машина остаётся в списке до оплаты"); }
     return { ok: true };
   };
   O.setMasters = function (S, o, ids, who) { o.masters = ids.slice(); O.log(o, who, "Исполнители: " + (ids.map((id) => SM.empName(S, id)).join(", ") || "—")); };
@@ -99,7 +107,7 @@
     const stRecs = o.items.filter((i) => i.storageId).map((i) => S.storage.find((x) => x.id === i.storageId));
     if (stRecs.some((x) => !x || x.paid)) return { ok: false, msg: "Хранение в заказе уже оплачено или не найдено — уберите эту позицию" };
     const stock = SM.products.checkStock(S, o.items); if (!stock.ok) return stock;
-    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: o.id, kind: "service", payment, total: t.total, totals: t, items: o.items.map((i) => Object.assign({}, i)), runflat: o.runflat, loyalty: o.loyalty, clientId: o.clientId, plate: o.plate, masters: o.masters.slice(), who: who || "" };
+    const r = { id: SM.uid("r"), no: ++S.receiptSeq, ts: SM.now(), shiftId: sh.id, orderId: o.id, kind: "service", payment, total: t.total, totals: t, items: o.items.map((i) => Object.assign({}, i)), runflat: o.runflat, loyalty: o.loyalty, clientId: o.clientId, carId: o.carId || null, plate: o.plate, masters: o.masters.slice(), who: who || "" };
     S.receipts.push(r);
     if (payment === "cash") SM.shift.drawerMove(S, t.total, "sale", "Чек №" + r.no, r.ts);
     stRecs.forEach((x) => { x.paid = true; x.payment = payment; x.paidAt = r.ts; x.receiptId = r.id; });
@@ -115,7 +123,8 @@
   /** «Как в прошлый раз»: позиции последнего чека клиента по текущему прайсу. */
   O.repeatLast = function (S, o, who) {
     if (!o.clientId) return { ok: false, msg: "Клиент не найден" };
-    const last = SM.clientVisits(S, o.clientId)[0]; if (!last) return { ok: false, msg: "У клиента ещё не было визитов" };
+    const cl = SM.client(S, o.clientId), car = cl && SM.clients.car(cl, o.carId);
+    const last = (car && SM.clients.carVisits(S, cl, car)[0]) || SM.clientVisits(S, o.clientId)[0]; if (!last) return { ok: false, msg: "У клиента ещё не было визитов" };
     let n = 0;
     last.items.forEach((i) => {
       if (i.storageId || i.key === "storage" || i.productId || i.key === "paint") return;
