@@ -479,10 +479,11 @@ test("п.11 Товары: цена/закупка/остаток, в чек бе
   assert.equal(SM.orders.pay(S, o2, "cash", "т").ok, false);
 });
 test("Демо-данные v3: товары, покраска, живая очередь, напоминания создаются; RunFlat-надбавка в seed не сломана", () => {
-  const S = SM.seed({ now: new Date(2026, 10, 19, 14, 0).getTime() });
+  const now = new Date(2026, 10, 19, 14, 0).getTime();
+  const S = SM.seed({ now });
   assert.equal(S.version, 6);
   assert.ok(S.products.length >= 5); assert.equal(SM.paint.active(S).length, 2);
-  assert.equal(SM.live.waiting(S).length, 2); assert.equal(SM.live.waiting(S)[0].no, 1);
+  assert.equal(SM.live.waiting(S, now).length, 2); assert.equal(SM.live.waiting(S, now)[0].no, 1);
   assert.ok(S.clients.some((c) => c.notify && c.notify.consent));
   assert.ok(S.receipts.some((r) => r.runflat && r.totals.surcharge > 0));
   assert.ok(S.receipts.some((r) => r.totals.goods > 0));
